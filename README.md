@@ -8,9 +8,17 @@ version:
 ```
 modding API:
 ```
-minecraft forge
+Forge
 ```
 minecraft IP:
 ```
- minecraft.leox.me
+minecraft.leox.me
+```
+java version:
+```
+OpenJDK 21
+```
+IaC Tooling:
+```
+Ansible + Semaphore CI
 ```
