@@ -1,0 +1,9 @@
+world*/
+logs/
+crash-reports/
+backups/
+eula.txt
+usercache.json
+session.lock
+*.log
+*.pid
