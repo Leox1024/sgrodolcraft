@@ -1,4 +1,4 @@
-# Note: Not all server panels support this file. You may need to set these options in the panel itself.
+# Note: Max VM ram allocated 12GB (leave al least 2gb for the OS)
 
 # Xmx and Xms set the maximum and minimum RAM usage, respectively.
 # They can take any number, followed by an M (for megabyte) or a G (for gigabyte).
@@ -8,3 +8,6 @@
 # A good default for a modded server is 4GB. Do not allocate excessive amounts of RAM as too much may cause lag or crashes.
 # Uncomment the next line to set it. To uncomment, remove the # at the beginning of the line.
 # -Xmx4G
+-Xmx4G
+
+
