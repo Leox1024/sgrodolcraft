@@ -35,7 +35,7 @@ jobs:
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           tag: mods-latest
-          release_name: "Mods – latest"
+          release_name: "mods – latest"
           body: "Auto-updated on push to main. Commit: ${{ github.sha }}"
           overwrite: true
           file: dist/mods.zip
