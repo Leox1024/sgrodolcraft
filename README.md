@@ -1,7 +1,16 @@
 ## sgrodolcraft
 Minecraft server setup managed as IaC
 
-## version
-version: 1.21.10
-
-modding API: Minecraft Forge
+## config
+version:
+```
+1.21.10
+```
+modding API:
+```
+minecraft forge
+```
+minecraft IP:
+```
+ minecraft.leox.me
+```
