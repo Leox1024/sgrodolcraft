@@ -4,4 +4,3 @@ package:
   - "user_jvm_args.txt"
   - "mods/**"
   - "plugins/**"
-  - "config/**"
