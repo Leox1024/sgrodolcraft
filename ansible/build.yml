@@ -1,6 +1,5 @@
 ---
-# build artifacts on mc: always package, name by git tag
-- name: build artifacts on mc
+- name: build artifacts on mc (spec-driven)
   hosts: all
   become: yes
   become_user: root
@@ -16,9 +15,8 @@
   pre_tasks:
     - name: ensure tools
       package:
-        name: [git, zip, unzip]
+        name: [git, rsync, zip, unzip]
         state: present
-
     - name: ensure artifact dir
       file:
         path: "{{ artifacts_dir }}"
@@ -35,18 +33,16 @@
         version: main
         force: yes
 
-    - name: read latest tag (v*) if present
+    - name: read latest tag
       command: git -C "{{ repo_dir }}" describe --tags --abbrev=0 --match "v*"
       register: tag_out
       changed_when: false
       failed_when: false
-
     - name: read short sha
       command: git -C "{{ repo_dir }}" rev-parse --short=7 HEAD
       register: sha_out
       changed_when: false
-
-    - name: set version variables
+    - name: set version vars
       set_fact:
         version_tag: "{{ (tag_out.rc == 0 and tag_out.stdout|length>0) | ternary(tag_out.stdout, 'untagged-' ~ sha_out.stdout) }}"
         commit_sha: "{{ sha_out.stdout }}"
@@ -57,16 +53,26 @@
         state: directory
         mode: "0755"
 
-    - name: copy payload to stage
-      shell: |
-        set -e
-        rm -rf "{{ stage_dir }}"/* || true
-        cp -r "{{ repo_dir }}/server.properties" "{{ stage_dir }}/" 2>/dev/null || true
-        cp -r "{{ repo_dir }}/config" "{{ stage_dir }}/" 2>/dev/null || true
-        cp -r "{{ repo_dir }}/plugins" "{{ stage_dir }}/" 2>/dev/null || true
-        cp -r "{{ repo_dir }}/mods" "{{ stage_dir }}/" 2>/dev/null || true
-        cp -r "{{ repo_dir }}/run.sh" "{{ repo_dir }}/user_jvm_args.txt" "{{ stage_dir }}/" 2>/dev/null || true
-      args: { executable: /bin/bash }
+    - name: load build spec
+      include_vars:
+        file: "{{ repo_dir }}/ansible/mc-build.yml"
+        name: mcbuild
+
+    - name: write include list
+      copy:
+        dest: "{{ stage_dir }}/.include"
+        mode: "0644"
+        content: |
+          {% for p in mcbuild.package %}{{ p }}
+          {% endfor %}
+
+    - name: sync selected content
+      command: >
+        rsync -a --prune-empty-dirs
+        --include-from="{{ stage_dir }}/.include"
+        --exclude="*"
+        "{{ repo_dir }}/" "{{ stage_dir }}/"
+      changed_when: true
 
     - name: create zip
       archive:
@@ -97,40 +103,37 @@
 
   post_tasks:
     - name: cleanup stage
-      file: { path: "{{ stage_dir }}", state: absent }
+      file:
+        path: "{{ stage_dir }}"
+        state: absent
 
-    # zip
     - name: find zip artifacts
       ansible.builtin.find:
         paths: "{{ artifacts_dir }}"
         patterns: "config-*.zip"
         file_type: file
       register: zips
-    
     - name: remove old zip artifacts (keep 10 newest)
       ansible.builtin.file:
         path: "{{ item.path }}"
         state: absent
       loop: "{{ (zips.files | sort(attribute='mtime', reverse=True))[10:] | default([]) }}"
-    
-    # json
+
     - name: find json manifests
       ansible.builtin.find:
         paths: "{{ artifacts_dir }}"
         patterns: "config-*.json"
         file_type: file
       register: jsons
-    
     - name: remove old json manifests (keep 10 newest)
       ansible.builtin.file:
         path: "{{ item.path }}"
         state: absent
       loop: "{{ (jsons.files | sort(attribute='mtime', reverse=True))[10:] | default([]) }}"
-    
+
     - name: fix ownership to mc
       command: chown -R mc:mc "{{ artifacts_dir }}"
       changed_when: false
-
     - name: set permissions 755/644 in artifacts
       shell: |
         find "{{ artifacts_dir }}" -type d -exec chmod 755 {} \;
