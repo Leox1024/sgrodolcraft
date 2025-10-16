@@ -4,11 +4,11 @@ Minecraft server setup managed as IaC
 ## config
 version:
 ```
-1.21.10
+1.21.1
 ```
 modding API:
 ```
-Forge
+NeoForge 21.1.211
 ```
 minecraft IP:
 ```
