@@ -1,23 +1,21 @@
 ---
-# deploy in place from local artifacts on mc
-- name: deploy config to mc server (in-place, local artifact)
+# deploy from /home/mc/artifact/config-<tag>.zip to /home/mc/minecraft-survival
+- name: deploy config to mc (tag-based)
   hosts: all
   become: yes
   become_user: root
+  become_method: sudo
   gather_facts: false
 
   vars:
-    target_dir: /home/mc/minecraft-survival
-    service_name: mc-survival-java
+    target_dir: "/home/mc/minecraft-survival"
+    service_name: "mc-survival-java"
     mc_port: 25565
 
-    artifacts_dir: "/srv/mc/artifacts"                 # now on the mc vm
-    deploy_sha: "{{ deploy_sha | default(lookup('file', artifacts_dir ~ '/latest.txt')) | trim }}"
-    config_zip: "{{ artifacts_dir }}/config-{{ deploy_sha }}.zip"
-
-    stage_dir: "/tmp/sgrodocraft_{{ deploy_sha }}"
-    repo_root: "{{ lookup('env','SEMAPHORE_GIT_DIR') | default(playbook_dir ~ '/..', true) }}"
-    repo_files: [ 'run.sh', 'user_jvm_args.txt', 'server.properties' ]
+    artifacts_dir: "/home/mc/artifact"
+    deploy_tag: "{{ deploy_tag | default(lookup('file', artifacts_dir ~ '/latest.txt')) | trim }}"
+    config_zip: "{{ artifacts_dir }}/config-{{ deploy_tag }}.zip"
+    stage_dir: "/tmp/sgrodocraft_{{ deploy_tag }}"
 
     protect_paths:
       - "world/"
@@ -28,68 +26,76 @@
       - "backups/"
 
     set_motd_from_tag: true
-    version_tag: "{{ deploy_tag | default(omit) }}"
 
   pre_tasks:
-    - name: ensure target dir exists
-      file: { path: "{{ target_dir }}", state: directory, owner: mc, group: mc, mode: "0755" }
+    - name: ensure target dir
+      file:
+        path: "{{ target_dir }}"
+        state: directory
+        owner: mc
+        group: mc
+        mode: "0755"
 
   tasks:
-    - name: stop minecraft before deploy
+    - name: stop minecraft
       systemd: { name: "{{ service_name }}", state: stopped }
       ignore_errors: yes
 
     - name: create staging dir
       file: { path: "{{ stage_dir }}", state: directory, mode: "0755" }
 
-    - name: unarchive local artifact into staging
+    - name: unarchive artifact to staging
       unarchive:
         src: "{{ config_zip }}"
         dest: "{{ stage_dir }}"
         remote_src: yes
 
-    - name: copy repo single files into staging
-      loop: "{{ repo_files }}"
-      copy:
-        src: "{{ repo_root }}/{{ item }}"
-        dest: "{{ stage_dir }}/{{ item }}"
-        owner: mc
-        group: mc
-        mode: "{{ '0755' if item == 'run.sh' else '0644' }}"
-
-    - name: set motd from version_tag (optional)
-      when: set_motd_from_tag and (version_tag is defined)
+    - name: set motd from tag (optional)
+      when: set_motd_from_tag
       lineinfile:
         path: "{{ stage_dir }}/server.properties"
         regexp: '^motd='
-        line: "motd=sgrodolcraft {{ version_tag }}"
+        line: "motd=sgrodolcraft {{ deploy_tag }}"
         create: yes
         mode: "0644"
-        owner: mc
-        group: mc
 
-    - name: sync staging to target while protecting state
+    - name: rsync staging to target (preserve world/logs)
       synchronize:
         src: "{{ stage_dir }}/"
         dest: "{{ target_dir }}/"
         archive: yes
         delete: no
-        rsync_opts: >-
-          {{ protect_paths | map('regex_replace', '^(.*)$', '--exclude=\\1') | list }}
+        rsync_opts:
+          - "--exclude=world/"
+          - "--exclude=logs/"
+          - "--exclude=crash-reports/"
+          - "--exclude=*.lock"
+          - "--exclude=eula.txt"
+          - "--exclude=backups/"
 
     - name: cleanup staging
       file: { path: "{{ stage_dir }}", state: absent }
 
-    - name: start minecraft after deploy
+    - name: fix ownership to mc on target
+      command: chown -R mc:mc "{{ target_dir }}"
+      changed_when: false
+
+    - name: set permissions 755/644 on target
+      shell: |
+        find "{{ target_dir }}" -type d -exec chmod 755 {} \;
+        find "{{ target_dir }}" -type f -exec chmod 644 {} \;
+      changed_when: false
+
+    - name: start minecraft
       systemd: { name: "{{ service_name }}", state: started, enabled: yes }
 
     - name: health-check
       wait_for: { host: 127.0.0.1, port: "{{ mc_port }}", delay: 2, timeout: 60 }
 
-    - name: save deployed commit marker
+    - name: save deployed tag marker
       copy:
-        content: "{{ deploy_sha }}\n"
         dest: "{{ target_dir }}/.last_good_commit"
         owner: mc
         group: mc
         mode: "0644"
+        content: "{{ deploy_tag }}\n"
