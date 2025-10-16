@@ -1,45 +1,55 @@
 ---
-# build artifact on mc host: always package and write config-<sha>.zip + manifest
-- name: build artifacts on mc host
+# build artifacts on mc: always package, name by git tag
+- name: build artifacts on mc
   hosts: all
   become: yes
   become_user: root
   become_method: sudo
-
+  gather_facts: false
 
   vars:
     repo_url: "https://github.com/Leox1024/sgrodolcraft.git"
     repo_dir: "/home/mc/sgrodolcraft-src"
-    artifacts_dir: "/srv/mc/artifacts"
-    stage_dir: "/tmp/sgrodolcraft_build"
-    commit_sha: "{{ lookup('pipe', 'git -C ' ~ repo_dir ~ ' rev-parse HEAD || echo none') | trim }}"
+    artifacts_dir: "/home/mc/artifact"
+    stage_dir: "/tmp/sgrodocraft_build"
 
   pre_tasks:
-    - name: ensure base tools installed
+    - name: ensure tools
       package:
         name: [git, zip, unzip]
         state: present
 
-    - name: ensure artifacts dir exists
+    - name: ensure artifact dir
       file:
         path: "{{ artifacts_dir }}"
         state: directory
+        owner: mc
+        group: mc
         mode: "0755"
 
   tasks:
-    - name: clone or update repo directly on mc
+    - name: clone or update repo
       git:
         repo: "{{ repo_url }}"
         dest: "{{ repo_dir }}"
         version: main
         force: yes
 
-    - name: get latest commit sha
-      command: git -C "{{ repo_dir }}" rev-parse HEAD
-      register: gitsha
+    - name: read latest tag (v*) if present
+      command: git -C "{{ repo_dir }}" describe --tags --abbrev=0 --match "v*"
+      register: tag_out
       changed_when: false
-    - set_fact:
-        commit_sha: "{{ gitsha.stdout }}"
+      failed_when: false
+
+    - name: read short sha
+      command: git -C "{{ repo_dir }}" rev-parse --short=7 HEAD
+      register: sha_out
+      changed_when: false
+
+    - name: set version variables
+      set_fact:
+        version_tag: "{{ (tag_out.rc == 0 and tag_out.stdout|length>0) | ternary(tag_out.stdout, 'untagged-' ~ sha_out.stdout) }}"
+        commit_sha: "{{ sha_out.stdout }}"
 
     - name: prepare stage dir
       file:
@@ -47,52 +57,61 @@
         state: directory
         mode: "0755"
 
-    - name: copy selected files to stage dir
+    - name: copy payload to stage
       shell: |
-        cp -r {{ repo_dir }}/server.properties {{ stage_dir }}/ 2>/dev/null || true
-        cp -r {{ repo_dir }}/config {{ stage_dir }}/ 2>/dev/null || true
-        cp -r {{ repo_dir }}/plugins {{ stage_dir }}/ 2>/dev/null || true
-        cp -r {{ repo_dir }}/mods {{ stage_dir }}/ 2>/dev/null || true
-        cp -r {{ repo_dir }}/run.sh {{ repo_dir }}/user_jvm_args.txt {{ stage_dir }}/ 2>/dev/null || true
-      args:
-        executable: /bin/bash
+        set -e
+        rm -rf "{{ stage_dir }}"/* || true
+        cp -r "{{ repo_dir }}/server.properties" "{{ stage_dir }}/" 2>/dev/null || true
+        cp -r "{{ repo_dir }}/config" "{{ stage_dir }}/" 2>/dev/null || true
+        cp -r "{{ repo_dir }}/plugins" "{{ stage_dir }}/" 2>/dev/null || true
+        cp -r "{{ repo_dir }}/mods" "{{ stage_dir }}/" 2>/dev/null || true
+        cp -r "{{ repo_dir }}/run.sh" "{{ repo_dir }}/user_jvm_args.txt" "{{ stage_dir }}/" 2>/dev/null || true
+      args: { executable: /bin/bash }
 
-    - name: create zip file
+    - name: create zip
       archive:
         path: "{{ stage_dir }}/"
-        dest: "{{ artifacts_dir }}/config-{{ commit_sha }}.zip"
+        dest: "{{ artifacts_dir }}/config-{{ version_tag }}.zip"
         format: zip
 
-    - name: write manifest file
+    - name: write manifest
       copy:
-        dest: "{{ artifacts_dir }}/config-{{ commit_sha }}.json"
+        dest: "{{ artifacts_dir }}/config-{{ version_tag }}.json"
         mode: "0644"
         content: |
-          {
+          { "tag": "{{ version_tag }}",
             "commit": "{{ commit_sha }}",
-            "created_at": "{{ lookup('pipe', 'date -Iseconds') | trim }}",
-            "zip": "config-{{ commit_sha }}.zip"
-          }
+            "created_at": "{{ lookup('pipe','date -Iseconds') | trim }}",
+            "zip": "config-{{ version_tag }}.zip" }
 
-    - name: update latest symlinks
-      file:
-        src: "{{ artifacts_dir }}/config-{{ commit_sha }}.zip"
+    - name: update latest pointers
+      copy:
+        dest: "{{ artifacts_dir }}/latest.txt"
+        mode: "0644"
+        content: "{{ version_tag }}\n"
+    - file:
+        src: "{{ artifacts_dir }}/config-{{ version_tag }}.zip"
         dest: "{{ artifacts_dir }}/config-latest.zip"
         state: link
         force: yes
-    - copy:
-        dest: "{{ artifacts_dir }}/latest.txt"
-        content: "{{ commit_sha }}\n"
 
+  post_tasks:
     - name: cleanup stage
-      file:
-        path: "{{ stage_dir }}"
-        state: absent
+      file: { path: "{{ stage_dir }}", state: absent }
 
-    - name: cleanup old artifacts (keep last 10)
+    - name: keep only last 10 artifacts
       shell: |
         ls -1t {{ artifacts_dir }}/config-*.zip | tail -n +11 | xargs -r rm -f
         ls -1t {{ artifacts_dir }}/config-*.json | tail -n +11 | xargs -r rm -f
-      args:
-        warn: false
+      args: { warn: false }
+      changed_when: false
+
+    - name: fix ownership to mc
+      command: chown -R mc:mc "{{ artifacts_dir }}"
+      changed_when: false
+
+    - name: set permissions 755/644 in artifacts
+      shell: |
+        find "{{ artifacts_dir }}" -type d -exec chmod 755 {} \;
+        find "{{ artifacts_dir }}" -type f -exec chmod 644 {} \;
       changed_when: false
