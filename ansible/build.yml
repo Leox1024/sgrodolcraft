@@ -3,7 +3,7 @@
 - name: build artifacts on mc host
   hosts: all
   become: yes
-  become_user: mc
+  become_user: root
   become_method: sudo
   gather_facts: false
 
