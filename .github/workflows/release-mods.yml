@@ -1,8 +1,9 @@
-name: release-mods-latest
+name: release-on-tag
 
 on:
   push:
-    branches: [ "main" ]
+    tags:
+      - "v*"
 
 permissions:
   contents: write
@@ -10,49 +11,95 @@ permissions:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout
+      - name: checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Ensure mods exist
-        id: check_mods
+      - name: set vars
+        id: v
         run: |
-          if [ ! -d "mods" ] || [ -z "$(ls -A mods | grep -vE '^\.git(ignore|keep)$')" ]; then
-            echo "has_mods=false" >> $GITHUB_OUTPUT
-          else
-            echo "has_mods=true" >> $GITHUB_OUTPUT
-          fi
+          echo "tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          echo "shortsha=$(git rev-parse --short=7 HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Create zip
-        if: steps.check_mods.outputs.has_mods == 'true'
+      # create mods zip if mods directory exists
+      - name: create mods zip
         run: |
           mkdir -p dist
-          zip -r dist/mods.zip mods -x "mods/.gitignore" "mods/.gitkeep"
+          if [ -d mods ] && find mods -type f ! -name ".gitignore" ! -name ".gitkeep" | grep -q .; then
+            zip -r "dist/mods-${{ steps.v.outputs.tag }}.zip" mods -x "mods/.gitignore" "mods/.gitkeep"
+          else
+            echo "no mods found, skipping"
+          fi
 
-      - name: Upload to 'mods-latest' release (create or update)
-        if: steps.check_mods.outputs.has_mods == 'true'
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          tag: mods-latest
-          release_name: "mods – latest"
-          body: "Auto-updated on push to main. Commit: ${{ github.sha }}"
-          overwrite: true
-          file: dist/mods.zip
-          asset_name: mods.zip
-
-      - name: Upload checksums (optional)
-        if: steps.check_mods.outputs.has_mods == 'true'
+      # stage config payload (plugins/config/scripts)
+      - name: stage config payload
         run: |
-          (cd dist && sha256sum mods.zip > checksums.txt)
-        shell: bash
+          mkdir -p stage/config dist
+          for p in plugins config run.sh user_jvm_args.txt; do
+            [ -e "$p" ] && cp -a "$p" stage/config/
+          done
+          if [ -f server.properties ]; then
+            cp server.properties stage/config/server.properties
+          fi
+          if grep -q '^motd=' stage/config/server.properties 2>/dev/null; then
+            sed -i -E "s/^motd=.*/motd=sgrodolcraft ${{ steps.v.outputs.tag }}/" stage/config/server.properties
+          else
+            echo "motd=sgrodolcraft ${{ steps.v.outputs.tag }}" >> stage/config/server.properties
+          fi
 
-      - name: Upload checksum file
-        if: steps.check_mods.outputs.has_mods == 'true'
-        uses: svenstaro/upload-release-action@v2
+      - name: create config zip
+        run: |
+          ( cd stage && zip -r "../dist/config-${{ steps.v.outputs.tag }}-${{ steps.v.outputs.shortsha }}.zip" config )
+
+      - name: checksums and manifest
+        run: |
+          ( cd dist && sha256sum *.zip > checksums.txt )
+          cat > "dist/config-${{ steps.v.outputs.tag }}-${{ steps.v.outputs.shortsha }}.json" <<EOF
+          {
+            "tag": "${{ steps.v.outputs.tag }}",
+            "commit": "${{ steps.v.outputs.shortsha }}",
+            "created_at": "$(date -Iseconds)",
+            "mods_zip": "$(ls dist | grep -E '^mods-.*\\.zip$' || true)",
+            "config_zip": "config-${{ steps.v.outputs.tag }}-${{ steps.v.outputs.shortsha }}.zip",
+            "motd": "sgrodolcraft ${{ steps.v.outputs.tag }}"
+          }
+          EOF
+
+      - name: create release and upload assets
+        uses: softprops/action-gh-release@v2
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          tag: mods-latest
-          overwrite: true
-          file: dist/checksums.txt
-          asset_name: checksums.txt
+          tag_name: ${{ steps.v.outputs.tag }}
+          name: "sgrodolcraft ${{ steps.v.outputs.tag }}"
+          body: |
+            automatic release for ${{ steps.v.outputs.tag }}
+            includes:
+            - mods zip (for players)
+            - config zip (server configs with updated motd)
+            - checksums
+          files: |
+            dist/*.zip
+            dist/*.json
+            dist/checksums.txt
+
+      # update motd in server.properties and push directly to main
+      - name: update motd in repo and push to main
+        run: |
+          file="server.properties"
+          tmp="$(mktemp)"
+          if [ -f "$file" ]; then cp "$file" "$tmp"; fi
+          if grep -q '^motd=' "$tmp" 2>/dev/null; then
+            sed -i -E "s/^motd=.*/motd=sgrodolcraft ${{ steps.v.outputs.tag }}/" "$tmp"
+          else
+            echo "motd=sgrodolcraft ${{ steps.v.outputs.tag }}" >> "$tmp"
+          fi
+          mv "$tmp" "$file"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout main
+          git pull --ff-only
+          git add server.properties
+          git commit -m "chore(motd): set to 'sgrodolcraft ${{ steps.v.outputs.tag }}' [skip ci]" || exit 0
+          git push origin main
