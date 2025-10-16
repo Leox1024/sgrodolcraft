@@ -85,21 +85,34 @@
         create: yes
         mode: "0644"
 
-    - name: mirror top level files with delete
-      ansible.builtin.shell: >
-        rsync -a --delete
-        --include='server.properties' --include='run.sh' --include='user_jvm_args.txt' --exclude='*'
-        "{{ stage_dir }}/" "{{ target_dir }}/"
+    - name: ensure base dirs exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: mc
+        group: mc
+        mode: "0755"
+      loop:
+        - "{{ target_dir }}/config"
+        - "{{ target_dir }}/mods"
+        - "{{ target_dir }}/plugins"
+
+    - name: copy top files (no delete)
+      ansible.builtin.shell: |
+        set -e
+        for f in server.properties run.sh user_jvm_args.txt; do
+          [ -f "{{ stage_dir }}/$f" ] && cp -f "{{ stage_dir }}/$f" "{{ target_dir }}/$f" || true
+        done
       args:
         executable: /bin/bash
 
-    - name: mirror config dir with delete
+    - name: sync config dir (with delete)
       ansible.builtin.shell: >
         rsync -a --delete "{{ stage_dir }}/config/" "{{ target_dir }}/config/" 2>/dev/null || true
       args:
         executable: /bin/bash
 
-    - name: prune mods jars only (keep dirs)
+    - name: sync mods jars only (delete jars, keep dirs)
       ansible.builtin.shell: >
         rsync -a --delete
         --include='*/' --include='*.jar' --exclude='*'
@@ -107,7 +120,7 @@
       args:
         executable: /bin/bash
 
-    - name: prune plugins jars only (keep dirs)
+    - name: sync plugins jars only (delete jars, keep dirs)
       ansible.builtin.shell: >
         rsync -a --delete
         --include='*/' --include='*.jar' --exclude='*'
@@ -115,19 +128,10 @@
       args:
         executable: /bin/bash
 
-    - name: sync plugin configs without delete
+    - name: copy plugin configs (no delete)
       ansible.builtin.shell: >
         rsync -a --exclude='*.jar'
         "{{ stage_dir }}/plugins/" "{{ target_dir }}/plugins/" 2>/dev/null || true
-      args:
-        executable: /bin/bash
-
-    - name: rsync remaining payload excluding runtime paths
-      ansible.builtin.shell: >
-        rsync -a --delete
-        {{ protect_paths | map('regex_replace', '^(.*)$', "--exclude='\\1'") | join(' ') }}
-        --exclude='mods/**' --exclude='plugins/**'
-        "{{ stage_dir }}/" "{{ target_dir }}/"
       args:
         executable: /bin/bash
 
