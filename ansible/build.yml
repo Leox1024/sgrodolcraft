@@ -55,8 +55,8 @@
 
     - name: load build spec
       include_vars:
-        file: "{{ repo_dir }}/ansible/mc-build.yml"
-        name: mcbuild
+       file: "{{ repo_dir }}/ansible/mc-build.yml"
+       remote_src: yes
 
     - name: write include list
       copy:
