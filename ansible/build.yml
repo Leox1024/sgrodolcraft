@@ -1,6 +1,6 @@
 ---
 # build artifact on mc host: always package and write config-<sha>.zip + manifest
-- name: build artifacts on mc host (no change checks)
+- name: build artifacts on mc host
   hosts: all
   become: yes
   become_user: root
