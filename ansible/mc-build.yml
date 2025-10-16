@@ -1,0 +1,7 @@
+package:
+  - "server.properties"
+  - "run.sh"
+  - "user_jvm_args.txt"
+  - "mods/**"
+  - "plugins/**"
+  - "config/**"

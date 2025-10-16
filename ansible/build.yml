@@ -1,85 +1,161 @@
 ---
-# build artifact on semaphore: config-<sha>.zip + manifest
-- name: build artifacts (config-<sha>.zip + manifest)
-  hosts: localhost
-  connection: local
+- name: build artifacts on mc
+  hosts: all
+  become: yes
+  become_user: root
+  become_method: sudo
   gather_facts: false
 
+#------------------------------------------#
+
   vars:
-    repo_root: "{{ playbook_dir | dirname }}"
-    artifacts_dir: "/srv/mc/artifacts"
-    commit_sha: "{{ lookup('pipe', 'git -C ' ~ repo_root ~ ' rev-parse HEAD') | trim }}"
-    build_cfg: "{{ lookup('file', repo_root ~ '/.mc-build.yml') | from_yaml }}"
-    triggers: "{{ build_cfg.triggers | default([]) }}"
-    package_globs: "{{ build_cfg.package | default([]) }}"
-    manifest_path: "{{ artifacts_dir }}/config-{{ commit_sha }}.json"
-    zip_path: "{{ artifacts_dir }}/config-{{ commit_sha }}.zip"
+    repo_url: "https://github.com/Leox1024/sgrodolcraft.git"
+    repo_dir: "/home/mc/sgrodolcraft-src"
+    artifacts_dir: "/home/mc/artifact"
+    stage_dir: "/tmp/sgrodocraft_build"
+
+#------------------------------------------#
+
+  pre_tasks:
+    - name: ensure required tools
+      package:
+        name: [git, zip, unzip]
+        state: present
+
+    - name: ensure artifacts dir
+      file:
+        path: "{{ artifacts_dir }}"
+        state: directory
+        owner: mc
+        group: mc
+        mode: "0755"
+
+#------------------------------------------#
 
   tasks:
-    - name: ensure artifacts dir
-      file: { path: "{{ artifacts_dir }}", state: directory, mode: "0755" }
+    - name: clone or update repo
+      git:
+        repo: "{{ repo_url }}"
+        dest: "{{ repo_dir }}"
+        version: main
+        force: yes
 
-    - name: get previous commit
-      command: git -C "{{ repo_root }}" rev-parse HEAD~1
-      register: prev
-      changed_when: false
-      failed_when: false
-
-    - name: diff current vs previous commit
-      command: git -C "{{ repo_root }}" diff --name-only {{ prev.stdout | default('HEAD') }} HEAD
-      register: diff
+    - name: fetch tags
+      command: git -C "{{ repo_dir }}" fetch --tags --force
       changed_when: false
 
-    - name: check if relevant files changed
+    - name: read newest v* tag (not only reachable)
+      shell: |
+        set -e
+        git -C "{{ repo_dir }}" tag --list "v*" --sort=-version:refname | head -n1
+      register: tag_any
+      changed_when: false
+
+    - name: read short sha
+      command: git -C "{{ repo_dir }}" rev-parse --short=7 HEAD
+      register: sha_out
+      changed_when: false
+
+    - name: set version vars
       set_fact:
-        changed_relevant: "{{ (diff.stdout_lines | default([])) | select('match', item) | list | length > 0 }}"
-      loop: "{{ triggers }}"
-      register: match_results
-      changed_when: false
+        version_tag: "{{ (tag_any.stdout is defined and tag_any.stdout|length>0) | ternary(tag_any.stdout, 'untagged-' ~ sha_out.stdout) }}"
+        commit_sha: "{{ sha_out.stdout }}"
 
-    - name: skip build if nothing relevant changed
-      when: match_results.results | map(attribute='ansible_facts.changed_relevant') | select('equalto', true) | list | length == 0
-      debug: { msg: "no relevant changes, skipping build" }
-    - meta: end_play
-      when: match_results.results | map(attribute='ansible_facts.changed_relevant') | select('equalto', true) | list | length == 0
+    - name: prepare stage dir
+      file:
+        path: "{{ stage_dir }}"
+        state: directory
+        mode: "0755"
 
-    - name: collect files to package (resolve globs)
-      command: >
-        bash -lc "shopt -s globstar dotglob nullglob;
-        cd '{{ repo_root }}'; printf '%s\n' {{ package_globs | map('quote') | join(' ') }}"
-      register: pkg_list
-      changed_when: false
+    - name: load build spec from repo on remote host
+      slurp:
+        src: "{{ repo_dir }}/ansible/mc-build.yml"
+      register: build_spec_raw
 
-    - name: create zip archive
+    - name: parse build spec yaml
+      set_fact:
+        mcbuilder: "{{ build_spec_raw.content | b64decode | from_yaml }}"
+
+    - name: copy payload to stage
+      shell: |
+        set -e
+        rm -rf "{{ stage_dir }}"/* || true
+        for item in $(echo '{{ mcbuilder.package | join(" ") }}'); do
+          cp -r "{{ repo_dir }}/$item" "{{ stage_dir }}/" 2>/dev/null || true
+        done
+      args:
+        executable: /bin/bash
+
+    - name: create zip artifact
       archive:
-        path: "{{ pkg_list.stdout_lines | map('regex_replace', '^(.*)$', repo_root ~ '/\\1') | list }}"
-        dest: "{{ zip_path }}"
+        path: "{{ stage_dir }}/"
+        dest: "{{ artifacts_dir }}/config-{{ version_tag }}.zip"
         format: zip
-        remove: no
-
-    - name: compute sha256
-      command: sha256sum "{{ zip_path }}"
-      register: sha
-      changed_when: false
 
     - name: write manifest
       copy:
-        dest: "{{ manifest_path }}"
+        dest: "{{ artifacts_dir }}/config-{{ version_tag }}.json"
         mode: "0644"
         content: |
           {
+            "tag": "{{ version_tag }}",
             "commit": "{{ commit_sha }}",
             "created_at": "{{ lookup('pipe','date -Iseconds') | trim }}",
-            "zip": "{{ zip_path }}",
-            "sha256": "{{ (sha.stdout.split()[0]) | default('') }}"
+            "zip": "config-{{ version_tag }}.zip"
           }
 
     - name: update latest pointers
-      copy: { dest: "{{ artifacts_dir }}/latest.txt", content: "{{ commit_sha }}\n", mode: "0644" }
-    - file: { src: "{{ zip_path }}", dest: "{{ artifacts_dir }}/config-latest.zip", state: link, force: yes }
+      copy:
+        dest: "{{ artifacts_dir }}/latest.txt"
+        mode: "0644"
+        content: "{{ version_tag }}\n"
 
-    - name: cleanup old artifacts (keep last 10)
+    - file:
+        src: "{{ artifacts_dir }}/config-{{ version_tag }}.zip"
+        dest: "{{ artifacts_dir }}/config-latest.zip"
+        state: link
+        force: yes
+
+#------------------------------------------#
+
+  post_tasks:
+    - name: cleanup stage dir
+      file:
+        path: "{{ stage_dir }}"
+        state: absent
+
+    - name: find zip artifacts
+      find:
+        paths: "{{ artifacts_dir }}"
+        patterns: "config-*.zip"
+        file_type: file
+      register: zips
+
+    - name: remove old zip artifacts (keep 10 newest)
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ (zips.files | sort(attribute='mtime', reverse=True))[10:] | default([]) }}"
+
+    - name: find json manifests
+      find:
+        paths: "{{ artifacts_dir }}"
+        patterns: "config-*.json"
+        file_type: file
+      register: jsons
+
+    - name: remove old json manifests (keep 10 newest)
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ (jsons.files | sort(attribute='mtime', reverse=True))[10:] | default([]) }}"
+
+    - name: fix ownership to mc
+      command: chown -R mc:mc "{{ artifacts_dir }}"
+      changed_when: false
+
+    - name: set permissions 755/644 in artifacts
       shell: |
-        ls -1t {{ artifacts_dir }}/config-*.zip | tail -n +11 | xargs -r rm -f
-        ls -1t {{ artifacts_dir }}/config-*.json | tail -n +11 | xargs -r rm -f
+        find "{{ artifacts_dir }}" -type d -exec chmod 755 {} \;
+        find "{{ artifacts_dir }}" -type f -exec chmod 644 {} \;
       changed_when: false

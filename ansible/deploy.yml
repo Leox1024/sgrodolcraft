@@ -1,151 +1,200 @@
 ---
-# deploy in place to /home/mc/minecraft-survival using an artifact from semaphore
-# no automatic rollback; optional motd update from version tag
-- name: deploy config to mc server (in-place)
-  hosts: mc_host
+- name: deploy config to mc (tag-based)
+  hosts: all
   become: yes
   become_user: root
-  become_method: su
+  become_method: sudo
+  gather_facts: false
+
+#------------------------------------------#
 
   vars:
-    # target location on the mc server
-    target_dir: /home/mc/minecraft-survival
-    service_name: mc-survival-java
+    target_dir: "/home/mc/minecraft-survival"
+    service_name: "mc-survival-java"
     mc_port: 25565
-
-    # artifacts live on the semaphore node (controller)
-    artifacts_dir: "/srv/mc/artifacts"
-    deploy_sha: "{{ deploy_sha | default(lookup('file', artifacts_dir ~ '/latest.txt')) | trim }}"
-    config_zip_local: "{{ artifacts_dir }}/config-{{ deploy_sha }}.zip"
-
-    # temporary staging on the target host
-    stage_dir: "/tmp/sgrodocraft_{{ deploy_sha }}"
-
-    # files copied 1:1 from repo
-    repo_root: "{{ lookup('env','SEMAPHORE_GIT_DIR') | default(playbook_dir ~ '/..', true) }}"
-    repo_files:
-      - run.sh
-      - user_jvm_args.txt
-      - server.properties
-
-    # protect state while syncing
+    artifacts_dir: "/home/mc/artifact"
+    set_motd_from_tag: true
     protect_paths:
-      - "world/"
+      - "world*/"
       - "logs/"
       - "crash-reports/"
-      - "*.lock"
-      - "eula.txt"
       - "backups/"
+      - "cache/"
+      - "debug/"
+      - "rcon.pipe"
+      - "usercache.json"
+      - "banned-ips.json"
+      - "banned-players.json"
+      - "whitelist.json"
+      - "ops.json"
+      - "versions/"
+      - "libraries/"
+      - "plugins/*/data/**"
+      - "plugins/*/cache/**"
+      - "plugins/*/logs/**"
+      - "plugins/*/storage/**"
+      - "plugins/Dynmap/web/tiles/**"
+      - "plugins/BlueMap/web/tiles/**"
+      - "plugins/Pl3xMap/web/tiles/**"
+      - "plugins/CoreProtect/database/**"
 
-    # optional version discovery and motd update
-    set_motd_from_tag: true
-    version_tag: "{{ deploy_tag | default(omit) }}"
-    github_owner: ""           # e.g. "leox1924" (optional)
-    github_repo: ""            # e.g. "sgrodolcraft" (optional)
-    github_api_token: ""       # set via semaphore secret if you want api fallback
+#------------------------------------------#
 
   pre_tasks:
-    - name: ensure target dir exists
-      file: { path: "{{ target_dir }}", state: directory, owner: mc, group: mc, mode: "0755" }
+    - name: ensure target dir
+      ansible.builtin.file:
+        path: "{{ target_dir }}"
+        state: directory
+        owner: mc
+        group: mc
+        mode: "0755"
 
-    # try to resolve version tag if not provided explicitly
-    - name: get version from git tag on controller when not provided
-      when: set_motd_from_tag and (version_tag is not defined)
-      delegate_to: localhost
-      command: >
-        bash -lc "git -C '{{ repo_root }}' describe --tags --abbrev=0 --match 'v*'"
-      register: git_tag
+    - name: read latest tag file
+      ansible.builtin.slurp:
+        src: "{{ artifacts_dir }}/latest.txt"
+      register: latest_tag_file
       failed_when: false
+
+    - name: derive tag from latest.txt
+      ansible.builtin.set_fact:
+        tag_from_latest: "{{ (latest_tag_file.content | default('') | b64decode | trim) | default('', true) }}"
+
+    - name: derive tag from symlink
+      ansible.builtin.shell: |
+        set -e
+        if [ -L "{{ artifacts_dir }}/config-latest.zip" ] || [ -f "{{ artifacts_dir }}/config-latest.zip" ]; then
+          real="$(readlink -f "{{ artifacts_dir }}/config-latest.zip" || echo "")"
+          echo "$real" | sed -E 's|.*/config-(.+)\.zip|\1|'
+        fi
+      args: { executable: /bin/bash }
+      register: tag_from_symlink
       changed_when: false
-
-    - name: set version_tag from git describe if found
-      when: set_motd_from_tag and (version_tag is not defined) and (git_tag.rc == 0) and (git_tag.stdout | length > 0)
-      set_fact:
-        version_tag: "{{ git_tag.stdout }}"
-
-    - name: fallback to github api latest release if still empty
-      when: set_motd_from_tag and (version_tag is not defined) and (github_owner | length > 0) and (github_repo | length > 0) and (github_api_token | length > 0)
-      delegate_to: localhost
-      uri:
-        url: "https://api.github.com/repos/{{ github_owner }}/{{ github_repo }}/releases/latest"
-        method: GET
-        headers:
-          Authorization: "Bearer {{ github_api_token }}"
-          Accept: "application/vnd.github+json"
-          X-GitHub-Api-Version: "2022-11-28"
-      register: gh_rel
       failed_when: false
-      changed_when: false
 
-    - name: set version_tag from github api if available
-      when: set_motd_from_tag and (version_tag is not defined) and (gh_rel.json.tag_name is defined)
-      set_fact:
-        version_tag: "{{ gh_rel.json.tag_name }}"
+    - name: derive tag from newest zip
+      ansible.builtin.shell: |
+        set -e
+        ls -1t {{ artifacts_dir }}/config-*.zip 2>/dev/null | head -1 | sed -E 's|.*/config-(.+)\.zip|\1|'
+      args: { executable: /bin/bash }
+      register: tag_from_newest
+      changed_when: false
+      failed_when: false
+
+    - name: choose deploy tag and stage dir
+      ansible.builtin.set_fact:
+        deploy_tag: >-
+          {{
+            tag_from_latest
+            if (tag_from_latest is string and (tag_from_latest | length) > 0 and (tag_from_latest is regex('^(v|untagged-)')))
+            else (tag_from_symlink.stdout | trim)
+            if ((tag_from_symlink.stdout | trim) | length) > 0
+            else (tag_from_newest.stdout | trim)
+          }}
+        stage_dir: "/tmp/sgrodocraft_{{ (
+          tag_from_latest
+          if (tag_from_latest is string and (tag_from_latest | length) > 0 and (tag_from_latest is regex('^(v|untagged-)')))
+          else (tag_from_symlink.stdout | trim)
+          if ((tag_from_symlink.stdout | trim) | length) > 0
+          else (tag_from_newest.stdout | trim)
+        ) }}"
+
+#------------------------------------------#
 
   tasks:
-    - name: stop minecraft service before deploy
-      systemd: { name: "{{ service_name }}", state: stopped }
+    - name: stop minecraft
+      ansible.builtin.systemd:
+        name: "{{ service_name }}"
+        state: stopped
       ignore_errors: yes
 
-    - name: create staging dir on target
-      file: { path: "{{ stage_dir }}", state: directory, mode: "0755" }
+    - name: create staging dir
+      ansible.builtin.file:
+        path: "{{ stage_dir }}"
+        state: directory
+        mode: "0755"
 
-    - name: copy artifact from controller to target
-      copy:
-        src: "{{ config_zip_local }}"
-        dest: "{{ stage_dir }}/config.zip"
-        mode: "0644"
-      delegate_to: localhost
-
-    - name: unarchive artifact into staging
-      unarchive:
-        src: "{{ stage_dir }}/config.zip"
+    - name: unarchive artifact to staging
+      ansible.builtin.unarchive:
+        src: "{{ artifacts_dir }}/config-{{ deploy_tag }}.zip"
         dest: "{{ stage_dir }}"
         remote_src: yes
 
-    - name: copy repo single files into staging
-      loop: "{{ repo_files }}"
-      copy:
-        src: "{{ repo_root }}/{{ item }}"
-        dest: "{{ stage_dir }}/{{ item }}"
-        owner: mc
-        group: mc
-        mode: "{{ '0755' if item == 'run.sh' else '0644' }}"
-
-    - name: set motd from version_tag (optional)
-      when: set_motd_from_tag and (version_tag is defined)
-      lineinfile:
+    - name: set motd from tag (optional)
+      when: set_motd_from_tag
+      ansible.builtin.lineinfile:
         path: "{{ stage_dir }}/server.properties"
         regexp: '^motd='
-        line: "motd=sgrodolcraft {{ version_tag }}"
+        line: "motd=sgrodolcraft {{ deploy_tag }}"
         create: yes
         mode: "0644"
-        owner: mc
-        group: mc
 
-    - name: sync staging to target while protecting state
-      synchronize:
-        src: "{{ stage_dir }}/"
-        dest: "{{ target_dir }}/"
-        archive: yes
-        delete: no
-        rsync_opts: >-
-          {{ protect_paths | map('regex_replace', '^(.*)$', '--exclude=\\1') | list }}
-      delegate_to: "{{ inventory_hostname }}"
+    - name: rsync staging to target (preserve worlds/logs etc)
+      ansible.builtin.shell: >
+        rsync -a
+        {{ protect_paths | map('regex_replace', '^(.*)$', "--exclude='\\1'") | join(' ') }}
+        "{{ stage_dir }}/" "{{ target_dir }}/"
+      args:
+        executable: /bin/bash
 
     - name: cleanup staging
-      file: { path: "{{ stage_dir }}", state: absent }
+      ansible.builtin.file:
+        path: "{{ stage_dir }}"
+        state: absent
 
-    - name: start minecraft service after deploy
-      systemd: { name: "{{ service_name }}", state: started, enabled: yes }
+    - name: fix ownership to mc on target
+      ansible.builtin.file:
+        path: "{{ target_dir }}"
+        owner: mc
+        group: mc
+        recurse: yes
 
-    - name: health-check on tcp port
-      wait_for: { host: 127.0.0.1, port: "{{ mc_port }}", delay: 2, timeout: 60 }
+    - name: set default perms 755/644 on target
+      ansible.builtin.shell: |
+        find "{{ target_dir }}" -type d -exec chmod 755 {} \;
+        find "{{ target_dir }}" -type f -exec chmod 644 {} \;
+      changed_when: false
 
-    - name: save deployed commit marker on target
-      copy:
-        content: "{{ deploy_sha }}\n"
+    - name: ensure scripts are executable
+      ansible.builtin.shell: |
+        [ -f "{{ target_dir }}/run.sh" ] && chmod 755 "{{ target_dir }}/run.sh" || true
+        find "{{ target_dir }}" -type f -name '*.sh' -exec chmod 755 {} \;
+      changed_when: false
+
+    - name: start minecraft
+      ansible.builtin.systemd:
+        name: "{{ service_name }}"
+        state: started
+        enabled: yes
+
+    - name: health-check
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ mc_port }}"
+        delay: 2
+        timeout: 60
+
+    - name: ensure marker dir exists
+      ansible.builtin.file:
+        path: "{{ target_dir }}"
+        state: directory
+        owner: mc
+        group: mc
+        mode: "0755"
+
+    - name: save deployed tag marker
+      ansible.builtin.copy:
         dest: "{{ target_dir }}/.last_good_commit"
         owner: mc
         group: mc
         mode: "0644"
+        force: yes
+        content: "{{ deploy_tag }}\n"
+
+#------------------------------------------#
+
+  post_tasks:
+    - name: always clean staging even if failed
+      ansible.builtin.file:
+        path: "{{ stage_dir }}"
+        state: absent
+      ignore_errors: yes
