@@ -101,9 +101,10 @@
 
     - name: keep only last 10 artifacts
       shell: |
-        ls -1t {{ artifacts_dir }}/config-*.zip | tail -n +11 | xargs -r rm -f
-        ls -1t {{ artifacts_dir }}/config-*.json | tail -n +11 | xargs -r rm -f
-      args: { warn: false }
+        ls -1t "{{ artifacts_dir }}/config-*.zip" 2>/dev/null | tail -n +11 | xargs -r rm -f
+        ls -1t "{{ artifacts_dir }}/config-*.json" 2>/dev/null | tail -n +11 | xargs -r rm -f
+      args:
+        warn: false
       changed_when: false
 
     - name: fix ownership to mc
