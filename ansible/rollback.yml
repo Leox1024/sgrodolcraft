@@ -1,17 +1,15 @@
 ---
-# rollback to the previous build relative to the one currently deployed
-# no automatic rollback; run manually when needed
-- name: rollback config to previous build (in-place)
+# rollback to the previous local artifact on mc
+- name: rollback to previous build (local artifacts)
   hosts: mc_host
   become: yes
   become_user: root
-  become_method: su
+  gather_facts: false
 
   vars:
     target_dir: /home/mc/minecraft-survival
     service_name: mc-survival-java
     mc_port: 25565
-
     artifacts_dir: "/srv/mc/artifacts"
     stage_dir: "/tmp/sgrodocraft_rollback"
 
@@ -24,15 +22,14 @@
 
     - name: fail if current commit marker is missing
       fail:
-        msg: "current commit marker not found on target (file .last_good_commit). run a normal deploy first."
+        msg: "current commit marker not found; run a normal deploy first"
       when: current_sha_file.content is not defined
 
     - name: set current_sha fact
       set_fact:
         current_sha: "{{ (current_sha_file.content | b64decode).strip() }}"
 
-    - name: compute previous sha on controller
-      delegate_to: localhost
+    - name: compute previous sha on mc
       shell: |
         set -e
         cur="{{ current_sha }}"
@@ -55,28 +52,21 @@
         msg: "no previous artifact found for current sha {{ current_sha }}"
       when: prev_sha_cmd.rc != 0 or prev_sha_cmd.stdout | length == 0
 
-    - name: define previous sha and artifact path
+    - name: set prev vars
       set_fact:
         prev_sha: "{{ prev_sha_cmd.stdout }}"
-        prev_zip_local: "{{ artifacts_dir }}/config-{{ prev_sha }}.zip"
+        prev_zip: "{{ artifacts_dir }}/config-{{ prev_sha }}.zip"
 
-    - name: stop minecraft service before rollback
+    - name: stop minecraft before rollback
       systemd: { name: "{{ service_name }}", state: stopped }
       ignore_errors: yes
 
-    - name: create staging dir on target
+    - name: create staging dir
       file: { path: "{{ stage_dir }}", state: directory, mode: "0755" }
-
-    - name: copy previous artifact from controller to target
-      copy:
-        src: "{{ prev_zip_local }}"
-        dest: "{{ stage_dir }}/config.zip"
-        mode: "0644"
-      delegate_to: localhost
 
     - name: unarchive previous artifact into staging
       unarchive:
-        src: "{{ stage_dir }}/config.zip"
+        src: "{{ prev_zip }}"
         dest: "{{ stage_dir }}"
         remote_src: yes
 
@@ -93,25 +83,20 @@
           - "--exclude=*.lock"
           - "--exclude=eula.txt"
           - "--exclude=backups/"
-      delegate_to: "{{ inventory_hostname }}"
 
     - name: cleanup staging
       file: { path: "{{ stage_dir }}", state: absent }
 
-    - name: start minecraft service after rollback
+    - name: start minecraft after rollback
       systemd: { name: "{{ service_name }}", state: started, enabled: yes }
 
-    - name: health-check on tcp port
+    - name: health-check
       wait_for: { host: 127.0.0.1, port: "{{ mc_port }}", delay: 2, timeout: 60 }
 
-    - name: update deployed commit marker to previous sha
+    - name: update marker to previous sha
       copy:
         content: "{{ prev_sha }}\n"
         dest: "{{ target_dir }}/.last_good_commit"
         owner: mc
         group: mc
         mode: "0644"
-
-    - name: show result
-      debug:
-        msg: "rolled back to previous build {{ prev_sha }}"
