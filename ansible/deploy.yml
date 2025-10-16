@@ -39,6 +39,7 @@
     - name: set deploy tag
       set_fact:
         deploy_tag: "{{ (latest_tag_file.content | b64decode).strip() }}"
+        stage_dir: "/tmp/sgrodocraft_{{ (latest_tag_file.content | b64decode).strip() }}"
 
   tasks:
     - name: stop minecraft
@@ -49,20 +50,20 @@
 
     - name: create staging dir
       file:
-        path: "/tmp/sgrodocraft_{{ deploy_tag }}"
+        path: "{{ stage_dir }}"
         state: directory
         mode: "0755"
 
     - name: unarchive artifact to staging
       unarchive:
         src: "{{ artifacts_dir }}/config-{{ deploy_tag }}.zip"
-        dest: "/tmp/sgrodocraft_{{ deploy_tag }}"
+        dest: "{{ stage_dir }}"
         remote_src: yes
 
     - name: set motd from tag (optional)
       when: set_motd_from_tag
       lineinfile:
-        path: "/tmp/sgrodocraft_{{ deploy_tag }}/server.properties"
+        path: "{{ stage_dir }}/server.properties"
         regexp: '^motd='
         line: "motd=sgrodolcraft {{ deploy_tag }}"
         create: yes
@@ -70,7 +71,7 @@
 
     - name: rsync staging to target (preserve world/logs)
       synchronize:
-        src: "/tmp/sgrodocraft_{{ deploy_tag }}/"
+        src: "{{ stage_dir }}/"
         dest: "{{ target_dir }}/"
         archive: yes
         delete: no
@@ -81,10 +82,12 @@
           - "--exclude=*.lock"
           - "--exclude=eula.txt"
           - "--exclude=backups/"
+      delegate_to: "{{ inventory_hostname }}"
+      mode: push
 
     - name: cleanup staging
       file:
-        path: "/tmp/sgrodocraft_{{ deploy_tag }}"
+        path: "{{ stage_dir }}"
         state: absent
 
     - name: fix ownership to mc on target
@@ -124,6 +127,6 @@
   post_tasks:
     - name: always clean staging even if failed
       file:
-        path: "/tmp/sgrodocraft_{{ deploy_tag }}"
+        path: "{{ stage_dir }}"
         state: absent
       ignore_errors: yes
