@@ -93,7 +93,6 @@
         group: mc
         mode: "0755"
       loop:
-        - "{{ target_dir }}/config"
         - "{{ target_dir }}/mods"
         - "{{ target_dir }}/plugins"
 
@@ -103,12 +102,6 @@
         for f in server.properties run.sh user_jvm_args.txt; do
           [ -f "{{ stage_dir }}/$f" ] && cp -f "{{ stage_dir }}/$f" "{{ target_dir }}/$f" || true
         done
-      args:
-        executable: /bin/bash
-
-    - name: sync config dir (with delete)
-      ansible.builtin.shell: >
-        rsync -a --delete "{{ stage_dir }}/config/" "{{ target_dir }}/config/" 2>/dev/null || true
       args:
         executable: /bin/bash
 
