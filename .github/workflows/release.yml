@@ -83,23 +83,3 @@ jobs:
             dist/*.zip
             dist/*.json
             dist/checksums.txt
-
-      # update motd in server.properties and push directly to main
-      - name: update motd in repo and push to main
-        run: |
-          file="server.properties"
-          tmp="$(mktemp)"
-          if [ -f "$file" ]; then cp "$file" "$tmp"; fi
-          if grep -q '^motd=' "$tmp" 2>/dev/null; then
-            sed -i -E "s/^motd=.*/motd=sgrodolcraft ${{ steps.v.outputs.tag }}/" "$tmp"
-          else
-            echo "motd=sgrodolcraft ${{ steps.v.outputs.tag }}" >> "$tmp"
-          fi
-          mv "$tmp" "$file"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout main
-          git pull --ff-only
-          git add server.properties
-          git commit -m "chore(motd): set to 'sgrodolcraft ${{ steps.v.outputs.tag }}' [skip ci]" || exit 0
-          git push origin main
