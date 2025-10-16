@@ -50,7 +50,7 @@
       changed_when: false
       failed_when: false
 
-    - name: read newest v* tag by create date
+    - name: read newest v* tag
       shell: git -C "{{ repo_dir }}" tag --list 'v*' --sort=-creatordate | head -n1
       register: tag_newest
       changed_when: false
@@ -63,11 +63,14 @@
     - name: set version vars
       set_fact:
         version_tag: >-
-          {{  tag_head.rc == 0 and (tag_head.stdout|trim)|length > 0
-              | ternary(tag_head.stdout|trim,
-                        (tag_newest.stdout|trim)|length > 0
-                        | ternary(tag_newest.stdout|trim, 'untagged-' ~ (sha_out.stdout|trim))) }}
-        commit_sha: "{{ sha_out.stdout | trim }}"
+          {% if tag_head.rc == 0 and tag_head.stdout|trim != "" %}
+          {{ tag_head.stdout|trim }}
+          {% elif tag_newest.stdout|trim != "" %}
+          {{ tag_newest.stdout|trim }}
+          {% else %}
+          untagged-{{ sha_out.stdout|trim }}
+          {% endif %}
+        commit_sha: "{{ sha_out.stdout|trim }}"
 
     - name: prepare stage dir
       file:
