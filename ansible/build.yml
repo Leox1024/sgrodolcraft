@@ -5,93 +5,86 @@
   become: yes
   become_user: root
   become_method: sudo
-  
-  vars:
-    # repo checked out by semaphore on controller
-    repo_root: "{{ playbook_dir | dirname }}"
 
-    # artifact location on mc vm
+
+vars:
+    repo_url: "https://github.com/Leox1024/sgrodolcraft.git"
+    repo_dir: "/home/mc/sgrodolcraft-src"
     artifacts_dir: "/srv/mc/artifacts"
-
-    # commit sha taken from controller repo (unique id for artifact)
-    commit_sha: "{{ lookup('pipe', 'git -C ' ~ repo_root ~ ' rev-parse HEAD') | trim }}"
-
-    # package set (what to include)
-    build_cfg: "{{ lookup('file', repo_root ~ '/.mc-build.yml') | from_yaml }}"
-    package_globs: "{{ build_cfg.package | default([]) }}"
-
-    # paths on mc
-    manifest_path: "{{ artifacts_dir }}/config-{{ commit_sha }}.json"
-    zip_path: "{{ artifacts_dir }}/config-{{ commit_sha }}.zip"
-    stage_dir: "/tmp/sgrodocraft_build_{{ commit_sha }}"
+    stage_dir: "/tmp/sgrodolcraft_build"
+    commit_sha: "{{ lookup('pipe', 'git -C ' ~ repo_dir ~ ' rev-parse HEAD || echo none') | trim }}"
 
   pre_tasks:
-    - name: ensure tools exist (zip/unzip)
+    - name: ensure base tools installed
       package:
-        name: "{{ item }}"
+        name: [git, zip, unzip]
         state: present
-      loop:
-        - zip
-        - unzip
 
-    - name: ensure artifacts dir on mc
+    - name: ensure artifacts dir exists
       file:
         path: "{{ artifacts_dir }}"
         state: directory
         mode: "0755"
 
   tasks:
-    - name: prepare staging dir on mc
+    - name: clone or update repo directly on mc
+      git:
+        repo: "{{ repo_url }}"
+        dest: "{{ repo_dir }}"
+        version: main
+        force: yes
+
+    - name: get latest commit sha
+      command: git -C "{{ repo_dir }}" rev-parse HEAD
+      register: gitsha
+      changed_when: false
+    - set_fact:
+        commit_sha: "{{ gitsha.stdout }}"
+
+    - name: prepare stage dir
       file:
         path: "{{ stage_dir }}"
         state: directory
         mode: "0755"
 
-    # sync only the package set from controller → mc staging
-    - name: sync package set to staging
-      delegate_to: localhost
-      synchronize:
-        src: "{{ item }}"
-        dest: "{{ stage_dir }}/"
-        archive: yes
-      with_items: "{{ package_globs | map('regex_replace', '^(.*)$', repo_root ~ '/\\1') | list }}"
+    - name: copy selected files to stage dir
+      shell: |
+        cp -r {{ repo_dir }}/server.properties {{ stage_dir }}/ 2>/dev/null || true
+        cp -r {{ repo_dir }}/config {{ stage_dir }}/ 2>/dev/null || true
+        cp -r {{ repo_dir }}/plugins {{ stage_dir }}/ 2>/dev/null || true
+        cp -r {{ repo_dir }}/mods {{ stage_dir }}/ 2>/dev/null || true
+        cp -r {{ repo_dir }}/run.sh {{ repo_dir }}/user_jvm_args.txt {{ stage_dir }}/ 2>/dev/null || true
+      args:
+        executable: /bin/bash
 
-    - name: create zip on mc
+    - name: create zip file
       archive:
         path: "{{ stage_dir }}/"
-        dest: "{{ zip_path }}"
+        dest: "{{ artifacts_dir }}/config-{{ commit_sha }}.zip"
         format: zip
-        remove: no
 
-    - name: compute sha256 on mc
-      command: sha256sum "{{ zip_path }}"
-      register: sha
-      changed_when: false
-
-    - name: write manifest on mc
+    - name: write manifest file
       copy:
-        dest: "{{ manifest_path }}"
+        dest: "{{ artifacts_dir }}/config-{{ commit_sha }}.json"
         mode: "0644"
         content: |
           {
             "commit": "{{ commit_sha }}",
-            "created_at": "{{ lookup('pipe','date -Iseconds') | trim }}",
-            "zip": "{{ zip_path }}",
-            "sha256": "{{ (sha.stdout.split()[0]) | default('') }}"
+            "created_at": "{{ lookup('pipe', 'date -Iseconds') | trim }}",
+            "zip": "config-{{ commit_sha }}.zip"
           }
 
-    - name: update latest pointers on mc
-      copy:
-        dest: "{{ artifacts_dir }}/latest.txt"
-        content: "{{ commit_sha }}\n"
-        mode: "0644"
-    - file:
-        src: "{{ zip_path }}"
+    - name: update latest symlinks
+      file:
+        src: "{{ artifacts_dir }}/config-{{ commit_sha }}.zip"
         dest: "{{ artifacts_dir }}/config-latest.zip"
         state: link
         force: yes
+    - copy:
+        dest: "{{ artifacts_dir }}/latest.txt"
+        content: "{{ commit_sha }}\n"
 
-    - name: cleanup staging on mc
+    - name: cleanup stage
       file:
         path: "{{ stage_dir }}"
         state: absent
