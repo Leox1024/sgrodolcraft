@@ -1,7 +1,7 @@
 ---
 # deploy in place from local artifacts on mc
 - name: deploy config to mc server (in-place, local artifact)
-  hosts: mc_host
+  hosts: all
   become: yes
   become_user: root
   gather_facts: false
