@@ -1,0 +1,17 @@
+# which paths trigger a build
+triggers:
+  - "server.properties"
+  - "run.sh"
+  - "user_jvm_args.txt"
+  - "mods/**"
+  - "plugins/**"
+  - "config/**"
+
+# what to package inside the artifact
+package:
+  - "server.properties"
+  - "run.sh"
+  - "user_jvm_args.txt"
+  - "mods/**"
+  - "plugins/**"
+  - "config/**"
