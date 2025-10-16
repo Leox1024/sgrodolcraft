@@ -18,9 +18,25 @@
       - "world*/"
       - "logs/"
       - "crash-reports/"
-      - "*.lock"
-      - "eula.txt"
       - "backups/"
+      - "cache/"
+      - "debug/"
+      - "rcon.pipe"
+      - "usercache.json"
+      - "banned-ips.json"
+      - "banned-players.json"
+      - "whitelist.json"
+      - "ops.json"
+      - "versions/"
+      - "libraries/"
+      - "plugins/*/data/**"
+      - "plugins/*/cache/**"
+      - "plugins/*/logs/**"
+      - "plugins/*/storage/**"
+      - "plugins/Dynmap/web/tiles/**"
+      - "plugins/BlueMap/web/tiles/**"
+      - "plugins/Pl3xMap/web/tiles/**"
+      - "plugins/CoreProtect/database/**"
 
 #------------------------------------------#
 
@@ -33,16 +49,54 @@
         group: mc
         mode: "0755"
 
-    - name: read latest tag from artifact dir (remote)
+    - name: read latest tag file
       ansible.builtin.slurp:
         src: "{{ artifacts_dir }}/latest.txt"
       register: latest_tag_file
-      failed_when: latest_tag_file is failed or latest_tag_file.content is not defined
+      failed_when: false
 
-    - name: set deploy tag and stage dir
+    - name: derive tag from latest.txt
       ansible.builtin.set_fact:
-        deploy_tag: "{{ (latest_tag_file.content | b64decode).strip() }}"
-        stage_dir: "/tmp/sgrodocraft_{{ (latest_tag_file.content | b64decode).strip() }}"
+        tag_from_latest: "{{ (latest_tag_file.content | default('') | b64decode | trim) | default('', true) }}"
+
+    - name: derive tag from symlink
+      ansible.builtin.shell: |
+        set -e
+        if [ -L "{{ artifacts_dir }}/config-latest.zip" ] || [ -f "{{ artifacts_dir }}/config-latest.zip" ]; then
+          real="$(readlink -f "{{ artifacts_dir }}/config-latest.zip" || echo "")"
+          echo "$real" | sed -E 's|.*/config-(.+)\.zip|\1|'
+        fi
+      args: { executable: /bin/bash }
+      register: tag_from_symlink
+      changed_when: false
+      failed_when: false
+
+    - name: derive tag from newest zip
+      ansible.builtin.shell: |
+        set -e
+        ls -1t {{ artifacts_dir }}/config-*.zip 2>/dev/null | head -1 | sed -E 's|.*/config-(.+)\.zip|\1|'
+      args: { executable: /bin/bash }
+      register: tag_from_newest
+      changed_when: false
+      failed_when: false
+
+    - name: choose deploy tag and stage dir
+      ansible.builtin.set_fact:
+        deploy_tag: >-
+          {{
+            tag_from_latest
+            if (tag_from_latest is string and (tag_from_latest | length) > 0 and (tag_from_latest is regex('^(v|untagged-)')))
+            else (tag_from_symlink.stdout | trim)
+            if ((tag_from_symlink.stdout | trim) | length) > 0
+            else (tag_from_newest.stdout | trim)
+          }}
+        stage_dir: "/tmp/sgrodocraft_{{ (
+          tag_from_latest
+          if (tag_from_latest is string and (tag_from_latest | length) > 0 and (tag_from_latest is regex('^(v|untagged-)')))
+          else (tag_from_symlink.stdout | trim)
+          if ((tag_from_symlink.stdout | trim) | length) > 0
+          else (tag_from_newest.stdout | trim)
+        ) }}"
 
 #------------------------------------------#
 
@@ -100,7 +154,7 @@
         find "{{ target_dir }}" -type f -exec chmod 644 {} \;
       changed_when: false
 
-    - name: ensure scripts are executable (run.sh + *.sh)
+    - name: ensure scripts are executable
       ansible.builtin.shell: |
         [ -f "{{ target_dir }}/run.sh" ] && chmod 755 "{{ target_dir }}/run.sh" || true
         find "{{ target_dir }}" -type f -name '*.sh' -exec chmod 755 {} \;
@@ -119,12 +173,21 @@
         delay: 2
         timeout: 60
 
+    - name: ensure marker dir exists
+      ansible.builtin.file:
+        path: "{{ target_dir }}"
+        state: directory
+        owner: mc
+        group: mc
+        mode: "0755"
+
     - name: save deployed tag marker
       ansible.builtin.copy:
         dest: "{{ target_dir }}/.last_good_commit"
         owner: mc
         group: mc
         mode: "0644"
+        force: yes
         content: "{{ deploy_tag }}\n"
 
 #------------------------------------------#
