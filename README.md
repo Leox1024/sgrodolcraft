@@ -4,7 +4,7 @@ Minecraft server setup managed as IaC
 ## config
 monitoring:
 ```
-monitor.leox.me / public:public
+monitor.leox.me / 93.49.80.101 / public:public
 ```
 version:
 ```
