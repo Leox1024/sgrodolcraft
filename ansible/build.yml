@@ -1,7 +1,7 @@
 ---
 # build artifact on mc host: config-<sha>.zip + manifest (keeps last 10)
 - name: build artifacts on mc host
-  hosts: mc_host
+  hosts: all
   become: yes
   become_user: mc
   gather_facts: false
