@@ -99,14 +99,34 @@
     - name: cleanup stage
       file: { path: "{{ stage_dir }}", state: absent }
 
-    - name: keep only last 10 artifacts
-      shell: |
-        ls -1t "{{ artifacts_dir }}/config-*.zip" 2>/dev/null | tail -n +11 | xargs -r rm -f
-        ls -1t "{{ artifacts_dir }}/config-*.json" 2>/dev/null | tail -n +11 | xargs -r rm -f
-      args:
-        warn: false
-      changed_when: false
-
+    # zip
+    - name: find zip artifacts
+      ansible.builtin.find:
+        paths: "{{ artifacts_dir }}"
+        patterns: "config-*.zip"
+        file_type: file
+      register: zips
+    
+    - name: remove old zip artifacts (keep 10 newest)
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ (zips.files | sort(attribute='mtime', reverse=True))[10:] | default([]) }}"
+    
+    # json
+    - name: find json manifests
+      ansible.builtin.find:
+        paths: "{{ artifacts_dir }}"
+        patterns: "config-*.json"
+        file_type: file
+      register: jsons
+    
+    - name: remove old json manifests (keep 10 newest)
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ (jsons.files | sort(attribute='mtime', reverse=True))[10:] | default([]) }}"
+    
     - name: fix ownership to mc
       command: chown -R mc:mc "{{ artifacts_dir }}"
       changed_when: false
