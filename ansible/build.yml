@@ -4,6 +4,7 @@
   hosts: all
   become: yes
   become_user: mc
+  become_method: sudo
   gather_facts: false
 
   vars:
