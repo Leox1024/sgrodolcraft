@@ -12,7 +12,6 @@
     mc_port: 25565
     artifacts_dir: "/home/mc/artifact"
     set_motd_from_tag: true
-
     protect_paths:
       - "world*/"
       - "logs/"
@@ -70,12 +69,12 @@
         mode: "0644"
 
     - name: rsync staging to target (preserve worlds/logs etc)
-      ansible.builtin.command: >
+      ansible.builtin.shell: >
         rsync -a
         {{ protect_paths | map('regex_replace', '^(.*)$', "--exclude='\\1'") | join(' ') }}
         "{{ stage_dir }}/" "{{ target_dir }}/"
       args:
-        warn: false
+        executable: /bin/bash
 
     - name: cleanup staging
       ansible.builtin.file:
