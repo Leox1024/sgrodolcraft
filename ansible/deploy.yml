@@ -96,6 +96,8 @@
         - "{{ target_dir }}/mods"
         - "{{ target_dir }}/plugins"
 
+# change here in casa of files update
+
     - name: copy top files (no delete)
       ansible.builtin.shell: |
         set -e
