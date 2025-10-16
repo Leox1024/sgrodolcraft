@@ -33,10 +33,6 @@
       - "plugins/*/cache/**"
       - "plugins/*/logs/**"
       - "plugins/*/storage/**"
-      - "plugins/Dynmap/web/tiles/**"
-      - "plugins/BlueMap/web/tiles/**"
-      - "plugins/Pl3xMap/web/tiles/**"
-      - "plugins/CoreProtect/database/**"
 
 #------------------------------------------#
 
