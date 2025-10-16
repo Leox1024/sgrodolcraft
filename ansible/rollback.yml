@@ -1,38 +1,44 @@
 ---
-# rollback to the previous local artifact on mc
 - name: rollback to previous build (local artifacts)
-  hosts: mc_host
+  hosts: all
   become: yes
   become_user: root
+  become_method: sudo
   gather_facts: false
 
   vars:
-    target_dir: /home/mc/minecraft-survival
-    service_name: mc-survival-java
+    target_dir: "/home/mc/minecraft-survival"
+    service_name: "mc-survival-java"
     mc_port: 25565
-    artifacts_dir: "/srv/mc/artifacts"
+    artifacts_dir: "/home/mc/artifact"
     stage_dir: "/tmp/sgrodocraft_rollback"
 
+  pre_tasks:
+    - name: ensure tools
+      package:
+        name: [rsync, unzip]
+        state: present
+
   tasks:
-    - name: read current deployed commit from target
+    - name: read current deployed tag
       slurp:
         src: "{{ target_dir }}/.last_good_commit"
-      register: current_sha_file
+      register: current_tag_file
       failed_when: false
 
-    - name: fail if current commit marker is missing
+    - name: fail if marker missing
       fail:
-        msg: "current commit marker not found; run a normal deploy first"
-      when: current_sha_file.content is not defined
+        msg: "current tag marker not found; run a normal deploy first"
+      when: current_tag_file.content is not defined
 
-    - name: set current_sha fact
+    - name: set current_tag
       set_fact:
-        current_sha: "{{ (current_sha_file.content | b64decode).strip() }}"
+        current_tag: "{{ (current_tag_file.content | b64decode).strip() }}"
 
-    - name: compute previous sha on mc
+    - name: compute previous tag
       shell: |
         set -e
-        cur="{{ current_sha }}"
+        cur="{{ current_tag }}"
         mapfile -t list < <(ls -1t {{ artifacts_dir }}/config-*.zip 2>/dev/null | sed -E 's|.*/config-([^.]+)\.zip|\1|')
         for i in "${!list[@]}"; do
           if [[ "${list[$i]}" == "$cur" ]]; then
@@ -44,33 +50,43 @@
           fi
         done
         exit 1
-      register: prev_sha_cmd
+      register: prev_cmd
       changed_when: false
 
-    - name: fail if there is no previous build
+    - name: fail if no previous artifact
       fail:
-        msg: "no previous artifact found for current sha {{ current_sha }}"
-      when: prev_sha_cmd.rc != 0 or prev_sha_cmd.stdout | length == 0
+        msg: "no previous artifact found for current tag {{ current_tag }}"
+      when: prev_cmd.rc != 0 or prev_cmd.stdout | length == 0
 
     - name: set prev vars
       set_fact:
-        prev_sha: "{{ prev_sha_cmd.stdout }}"
-        prev_zip: "{{ artifacts_dir }}/config-{{ prev_sha }}.zip"
+        prev_tag: "{{ prev_cmd.stdout }}"
+        prev_zip: "{{ artifacts_dir }}/config-{{ prev_cmd.stdout }}.zip"
 
-    - name: stop minecraft before rollback
-      systemd: { name: "{{ service_name }}", state: stopped }
+    - name: stop minecraft
+      systemd:
+        name: "{{ service_name }}"
+        state: stopped
       ignore_errors: yes
 
     - name: create staging dir
-      file: { path: "{{ stage_dir }}", state: directory, mode: "0755" }
+      file:
+        path: "{{ stage_dir }}"
+        state: directory
+        mode: "0755"
+        owner: mc
+        group: mc
 
-    - name: unarchive previous artifact into staging
+    - name: unarchive previous artifact
       unarchive:
         src: "{{ prev_zip }}"
         dest: "{{ stage_dir }}"
         remote_src: yes
+        owner: mc
+        group: mc
 
-    - name: rsync staging to target preserving state
+    - name: rsync to target (preserve worlds/logs, force mc ownership)
+      delegate_to: "{{ inventory_hostname }}"
       synchronize:
         src: "{{ stage_dir }}/"
         dest: "{{ target_dir }}/"
@@ -83,19 +99,34 @@
           - "--exclude=*.lock"
           - "--exclude=eula.txt"
           - "--exclude=backups/"
+          - "--chown=mc:mc"
+          - "--chmod=D755,F644"
 
     - name: cleanup staging
-      file: { path: "{{ stage_dir }}", state: absent }
+      file:
+        path: "{{ stage_dir }}"
+        state: absent
 
-    - name: start minecraft after rollback
-      systemd: { name: "{{ service_name }}", state: started, enabled: yes }
+    - name: enforce ownership
+      command: chown -R mc:mc "{{ target_dir }}"
+      changed_when: false
+
+    - name: start minecraft
+      systemd:
+        name: "{{ service_name }}"
+        state: started
+        enabled: yes
 
     - name: health-check
-      wait_for: { host: 127.0.0.1, port: "{{ mc_port }}", delay: 2, timeout: 60 }
+      wait_for:
+        host: 127.0.0.1
+        port: "{{ mc_port }}"
+        delay: 2
+        timeout: 60
 
-    - name: update marker to previous sha
+    - name: update marker
       copy:
-        content: "{{ prev_sha }}\n"
+        content: "{{ prev_tag }}\n"
         dest: "{{ target_dir }}/.last_good_commit"
         owner: mc
         group: mc
