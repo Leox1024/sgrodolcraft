@@ -99,17 +99,21 @@
             "zip": "config-{{ version_tag }}.zip"
           }
 
-    - name: update latest pointers
-      copy:
-        dest: "{{ artifacts_dir }}/latest.txt"
-        mode: "0644"
-        content: "{{ version_tag }}\n"
+    - name: refresh latest.txt atomically
+      shell: |
+        set -e
+        umask 022
+        printf "%s\n" "{{ version_tag }}" > "{{ artifacts_dir }}/.latest.tmp"
+        mv -f "{{ artifacts_dir }}/.latest.tmp" "{{ artifacts_dir }}/latest.txt"
+      args:
+        executable: /bin/bash
 
-    - file:
-        src: "{{ artifacts_dir }}/config-{{ version_tag }}.zip"
-        dest: "{{ artifacts_dir }}/config-latest.zip"
-        state: link
-        force: yes
+    - name: relink config-latest.zip
+      shell: |
+        ln -sfn "config-{{ version_tag }}.zip" "config-latest.zip"
+      args:
+        chdir: "{{ artifacts_dir }}"
+        executable: /bin/bash
 
 #------------------------------------------#
 
