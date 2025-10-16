@@ -1,5 +1,4 @@
----
-- name: deploy config to mc (tag-based)
+- name: deploy config
   hosts: all
   become: yes
   become_user: root
@@ -49,50 +48,12 @@
       ansible.builtin.slurp:
         src: "{{ artifacts_dir }}/latest.txt"
       register: latest_tag_file
-      failed_when: false
+      failed_when: latest_tag_file is failed or latest_tag_file.content is not defined
 
-    - name: derive tag from latest.txt
+    - name: set deploy tag and stage dir
       ansible.builtin.set_fact:
-        tag_from_latest: "{{ (latest_tag_file.content | default('') | b64decode | trim) | default('', true) }}"
-
-    - name: derive tag from symlink
-      ansible.builtin.shell: |
-        set -e
-        if [ -L "{{ artifacts_dir }}/config-latest.zip" ] || [ -f "{{ artifacts_dir }}/config-latest.zip" ]; then
-          real="$(readlink -f "{{ artifacts_dir }}/config-latest.zip" || echo "")"
-          echo "$real" | sed -E 's|.*/config-(.+)\.zip|\1|'
-        fi
-      args: { executable: /bin/bash }
-      register: tag_from_symlink
-      changed_when: false
-      failed_when: false
-
-    - name: derive tag from newest zip
-      ansible.builtin.shell: |
-        set -e
-        ls -1t {{ artifacts_dir }}/config-*.zip 2>/dev/null | head -1 | sed -E 's|.*/config-(.+)\.zip|\1|'
-      args: { executable: /bin/bash }
-      register: tag_from_newest
-      changed_when: false
-      failed_when: false
-
-    - name: choose deploy tag and stage dir
-      ansible.builtin.set_fact:
-        deploy_tag: >-
-          {{
-            tag_from_latest
-            if (tag_from_latest is string and (tag_from_latest | length) > 0 and (tag_from_latest is regex('^(v|untagged-)')))
-            else (tag_from_symlink.stdout | trim)
-            if ((tag_from_symlink.stdout | trim) | length) > 0
-            else (tag_from_newest.stdout | trim)
-          }}
-        stage_dir: "/tmp/sgrodocraft_{{ (
-          tag_from_latest
-          if (tag_from_latest is string and (tag_from_latest | length) > 0 and (tag_from_latest is regex('^(v|untagged-)')))
-          else (tag_from_symlink.stdout | trim)
-          if ((tag_from_symlink.stdout | trim) | length) > 0
-          else (tag_from_newest.stdout | trim)
-        ) }}"
+        deploy_tag: "{{ (latest_tag_file.content | b64decode).strip() }}"
+        stage_dir: "/tmp/sgrodocraft_{{ (latest_tag_file.content | b64decode).strip() }}"
 
 #------------------------------------------#
 
@@ -115,7 +76,7 @@
         dest: "{{ stage_dir }}"
         remote_src: yes
 
-    - name: set motd from tag (optional)
+    - name: set motd from tag
       when: set_motd_from_tag
       ansible.builtin.lineinfile:
         path: "{{ stage_dir }}/server.properties"
@@ -124,10 +85,48 @@
         create: yes
         mode: "0644"
 
-    - name: rsync staging to target (preserve worlds/logs etc)
+    - name: mirror top level files with delete
       ansible.builtin.shell: >
-        rsync -a
+        rsync -a --delete
+        --include='server.properties' --include='run.sh' --include='user_jvm_args.txt' --exclude='*'
+        "{{ stage_dir }}/" "{{ target_dir }}/"
+      args:
+        executable: /bin/bash
+
+    - name: mirror config dir with delete
+      ansible.builtin.shell: >
+        rsync -a --delete "{{ stage_dir }}/config/" "{{ target_dir }}/config/" 2>/dev/null || true
+      args:
+        executable: /bin/bash
+
+    - name: prune mods jars only (keep dirs)
+      ansible.builtin.shell: >
+        rsync -a --delete
+        --include='*/' --include='*.jar' --exclude='*'
+        "{{ stage_dir }}/mods/" "{{ target_dir }}/mods/" 2>/dev/null || true
+      args:
+        executable: /bin/bash
+
+    - name: prune plugins jars only (keep dirs)
+      ansible.builtin.shell: >
+        rsync -a --delete
+        --include='*/' --include='*.jar' --exclude='*'
+        "{{ stage_dir }}/plugins/" "{{ target_dir }}/plugins/" 2>/dev/null || true
+      args:
+        executable: /bin/bash
+
+    - name: sync plugin configs without delete
+      ansible.builtin.shell: >
+        rsync -a --exclude='*.jar'
+        "{{ stage_dir }}/plugins/" "{{ target_dir }}/plugins/" 2>/dev/null || true
+      args:
+        executable: /bin/bash
+
+    - name: rsync remaining payload excluding runtime paths
+      ansible.builtin.shell: >
+        rsync -a --delete
         {{ protect_paths | map('regex_replace', '^(.*)$', "--exclude='\\1'") | join(' ') }}
+        --exclude='mods/**' --exclude='plugins/**'
         "{{ stage_dir }}/" "{{ target_dir }}/"
       args:
         executable: /bin/bash
@@ -137,20 +136,20 @@
         path: "{{ stage_dir }}"
         state: absent
 
-    - name: fix ownership to mc on target
+    - name: fix ownership to mc
       ansible.builtin.file:
         path: "{{ target_dir }}"
         owner: mc
         group: mc
         recurse: yes
 
-    - name: set default perms 755/644 on target
+    - name: set default perms 755/644
       ansible.builtin.shell: |
         find "{{ target_dir }}" -type d -exec chmod 755 {} \;
         find "{{ target_dir }}" -type f -exec chmod 644 {} \;
       changed_when: false
 
-    - name: ensure scripts are executable
+    - name: ensure scripts executable
       ansible.builtin.shell: |
         [ -f "{{ target_dir }}/run.sh" ] && chmod 755 "{{ target_dir }}/run.sh" || true
         find "{{ target_dir }}" -type f -name '*.sh' -exec chmod 755 {} \;
@@ -169,14 +168,6 @@
         delay: 2
         timeout: 60
 
-    - name: ensure marker dir exists
-      ansible.builtin.file:
-        path: "{{ target_dir }}"
-        state: directory
-        owner: mc
-        group: mc
-        mode: "0755"
-
     - name: save deployed tag marker
       ansible.builtin.copy:
         dest: "{{ target_dir }}/.last_good_commit"
@@ -189,7 +180,7 @@
 #------------------------------------------#
 
   post_tasks:
-    - name: always clean staging even if failed
+    - name: always clean staging
       ansible.builtin.file:
         path: "{{ stage_dir }}"
         state: absent
