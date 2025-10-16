@@ -1,11 +1,11 @@
 ---
 # build artifact on mc host: always package and write config-<sha>.zip + manifest
 - name: build artifacts on mc host (no change checks)
-  hosts: mc_host
+  hosts: all
   become: yes
-  become_user: mc
-  gather_facts: false
-
+  become_user: root
+  become_method: sudo
+  
   vars:
     # repo checked out by semaphore on controller
     repo_root: "{{ playbook_dir | dirname }}"
