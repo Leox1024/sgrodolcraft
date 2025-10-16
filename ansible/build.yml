@@ -1,5 +1,4 @@
----
-- name: build artifacts on mc
+- name: build artifacts
   hosts: all
   become: yes
   become_user: root
@@ -19,7 +18,7 @@
   pre_tasks:
     - name: ensure required tools
       package:
-        name: [git, zip, unzip]
+        name: [git, zip, unzip, rsync]
         state: present
 
     - name: ensure artifacts dir
@@ -44,7 +43,7 @@
       command: git -C "{{ repo_dir }}" fetch --tags --force
       changed_when: false
 
-    - name: read newest v* tag (not only reachable)
+    - name: read newest v* tag
       shell: |
         set -e
         git -C "{{ repo_dir }}" tag --list "v*" --sort=-version:refname | head -n1
@@ -67,12 +66,12 @@
         state: directory
         mode: "0755"
 
-    - name: load build spec from repo on remote host
+    - name: load build spec from repo
       slurp:
         src: "{{ repo_dir }}/ansible/mc-build.yml"
       register: build_spec_raw
 
-    - name: parse build spec yaml
+    - name: parse build spec
       set_fact:
         mcbuilder: "{{ build_spec_raw.content | b64decode | from_yaml }}"
 
@@ -104,17 +103,11 @@
             "zip": "config-{{ version_tag }}.zip"
           }
 
-    - name: update latest pointers
+    - name: update latest pointer
       copy:
         dest: "{{ artifacts_dir }}/latest.txt"
         mode: "0644"
         content: "{{ version_tag }}\n"
-
-    - file:
-        src: "{{ artifacts_dir }}/config-{{ version_tag }}.zip"
-        dest: "{{ artifacts_dir }}/config-latest.zip"
-        state: link
-        force: yes
 
 #------------------------------------------#
 
