@@ -2,6 +2,10 @@
 Minecraft server setup managed as IaC
 
 ## config
+monitoring:
+```
+monitor.leox.me / public:public
+```
 version:
 ```
 1.21.1
