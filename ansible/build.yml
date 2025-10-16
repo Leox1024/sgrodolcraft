@@ -1,65 +1,54 @@
 ---
-# build artifact on mc host: config-<sha>.zip + manifest (keeps last 10)
-- name: build artifacts on mc host
-  hosts: all
+# build artifact on mc host: always package and write config-<sha>.zip + manifest
+- name: build artifacts on mc host (no change checks)
+  hosts: mc_host
   become: yes
-  become_user: root
-  become_method: sudo
+  become_user: mc
   gather_facts: false
 
   vars:
-    # repo checked out by semaphore (controller)
+    # repo checked out by semaphore on controller
     repo_root: "{{ playbook_dir | dirname }}"
-    # where artifacts live on the mc vm
+
+    # artifact location on mc vm
     artifacts_dir: "/srv/mc/artifacts"
-    # compute commit from the repo on controller
+
+    # commit sha taken from controller repo (unique id for artifact)
     commit_sha: "{{ lookup('pipe', 'git -C ' ~ repo_root ~ ' rev-parse HEAD') | trim }}"
+
+    # package set (what to include)
     build_cfg: "{{ lookup('file', repo_root ~ '/.mc-build.yml') | from_yaml }}"
-    triggers: "{{ build_cfg.triggers | default([]) }}"
     package_globs: "{{ build_cfg.package | default([]) }}"
+
+    # paths on mc
     manifest_path: "{{ artifacts_dir }}/config-{{ commit_sha }}.json"
     zip_path: "{{ artifacts_dir }}/config-{{ commit_sha }}.zip"
     stage_dir: "/tmp/sgrodocraft_build_{{ commit_sha }}"
 
   pre_tasks:
+    - name: ensure tools exist (zip/unzip)
+      package:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - zip
+        - unzip
+
     - name: ensure artifacts dir on mc
-      file: { path: "{{ artifacts_dir }}", state: directory, mode: "0755" }
+      file:
+        path: "{{ artifacts_dir }}"
+        state: directory
+        mode: "0755"
 
   tasks:
-    # decide if we need a build (diff done on controller)
-    - name: get previous commit
-      delegate_to: localhost
-      command: git -C "{{ repo_root }}" rev-parse HEAD~1
-      register: prev
-      changed_when: false
-      failed_when: false
-
-    - name: diff current vs previous commit
-      delegate_to: localhost
-      command: git -C "{{ repo_root }}" diff --name-only {{ prev.stdout | default('HEAD') }} HEAD
-      register: diff
-      changed_when: false
-
-    - name: check if relevant files changed
-      set_fact:
-        changed_relevant: "{{ (diff.stdout_lines | default([])) | select('match', item) | list | length > 0 }}"
-      loop: "{{ triggers }}"
-      register: match_results
-      changed_when: false
-      delegate_to: localhost
-
-    - name: skip build if nothing relevant changed
-      when: match_results.results | map(attribute='ansible_facts.changed_relevant') | select('equalto', true) | list | length == 0
-      debug: { msg: "no relevant changes, skipping build" }
-      delegate_to: localhost
-    - meta: end_play
-      when: match_results.results | map(attribute='ansible_facts.changed_relevant') | select('equalto', true) | list | length == 0
-
-    # stage files on mc host (sync only the package set)
     - name: prepare staging dir on mc
-      file: { path: "{{ stage_dir }}", state: directory, mode: "0755" }
+      file:
+        path: "{{ stage_dir }}"
+        state: directory
+        mode: "0755"
 
-    - name: sync package set from controller to mc staging
+    # sync only the package set from controller → mc staging
+    - name: sync package set to staging
       delegate_to: localhost
       synchronize:
         src: "{{ item }}"
@@ -67,7 +56,6 @@
         archive: yes
       with_items: "{{ package_globs | map('regex_replace', '^(.*)$', repo_root ~ '/\\1') | list }}"
 
-    # build zip and manifest on mc
     - name: create zip on mc
       archive:
         path: "{{ stage_dir }}/"
@@ -93,15 +81,25 @@
           }
 
     - name: update latest pointers on mc
-      copy: { dest: "{{ artifacts_dir }}/latest.txt", content: "{{ commit_sha }}\n", mode: "0644" }
-    - file: { src: "{{ zip_path }}", dest: "{{ artifacts_dir }}/config-latest.zip", state: link, force: yes }
+      copy:
+        dest: "{{ artifacts_dir }}/latest.txt"
+        content: "{{ commit_sha }}\n"
+        mode: "0644"
+    - file:
+        src: "{{ zip_path }}"
+        dest: "{{ artifacts_dir }}/config-latest.zip"
+        state: link
+        force: yes
 
     - name: cleanup staging on mc
-      file: { path: "{{ stage_dir }}", state: absent }
+      file:
+        path: "{{ stage_dir }}"
+        state: absent
 
     - name: cleanup old artifacts (keep last 10)
       shell: |
         ls -1t {{ artifacts_dir }}/config-*.zip | tail -n +11 | xargs -r rm -f
         ls -1t {{ artifacts_dir }}/config-*.json | tail -n +11 | xargs -r rm -f
-      args: { warn: false }
+      args:
+        warn: false
       changed_when: false
