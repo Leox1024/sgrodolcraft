@@ -1,5 +1,4 @@
 ---
-# deploy from /home/mc/artifact/config-<tag>.zip to /home/mc/minecraft-survival
 - name: deploy config to mc (tag-based)
   hosts: all
   become: yes
@@ -11,11 +10,8 @@
     target_dir: "/home/mc/minecraft-survival"
     service_name: "mc-survival-java"
     mc_port: 25565
-
     artifacts_dir: "/home/mc/artifact"
-    deploy_tag: "{{ deploy_tag | default(lookup('file', artifacts_dir ~ '/latest.txt')) | trim }}"
-    config_zip: "{{ artifacts_dir }}/config-{{ deploy_tag }}.zip"
-    stage_dir: "/tmp/sgrodocraft_{{ deploy_tag }}"
+    set_motd_from_tag: true
 
     protect_paths:
       - "world/"
@@ -24,8 +20,6 @@
       - "*.lock"
       - "eula.txt"
       - "backups/"
-
-    set_motd_from_tag: true
 
   pre_tasks:
     - name: ensure target dir
@@ -36,24 +30,39 @@
         group: mc
         mode: "0755"
 
+    - name: read latest tag from artifact dir (remote)
+      slurp:
+        src: "{{ artifacts_dir }}/latest.txt"
+      register: latest_tag_file
+      failed_when: latest_tag_file is failed or latest_tag_file.content is not defined
+
+    - name: set deploy tag
+      set_fact:
+        deploy_tag: "{{ (latest_tag_file.content | b64decode).strip() }}"
+
   tasks:
     - name: stop minecraft
-      systemd: { name: "{{ service_name }}", state: stopped }
+      systemd:
+        name: "{{ service_name }}"
+        state: stopped
       ignore_errors: yes
 
     - name: create staging dir
-      file: { path: "{{ stage_dir }}", state: directory, mode: "0755" }
+      file:
+        path: "/tmp/sgrodocraft_{{ deploy_tag }}"
+        state: directory
+        mode: "0755"
 
     - name: unarchive artifact to staging
       unarchive:
-        src: "{{ config_zip }}"
-        dest: "{{ stage_dir }}"
+        src: "{{ artifacts_dir }}/config-{{ deploy_tag }}.zip"
+        dest: "/tmp/sgrodocraft_{{ deploy_tag }}"
         remote_src: yes
 
     - name: set motd from tag (optional)
       when: set_motd_from_tag
       lineinfile:
-        path: "{{ stage_dir }}/server.properties"
+        path: "/tmp/sgrodocraft_{{ deploy_tag }}/server.properties"
         regexp: '^motd='
         line: "motd=sgrodolcraft {{ deploy_tag }}"
         create: yes
@@ -61,12 +70,12 @@
 
     - name: rsync staging to target (preserve world/logs)
       synchronize:
-        src: "{{ stage_dir }}/"
+        src: "/tmp/sgrodocraft_{{ deploy_tag }}/"
         dest: "{{ target_dir }}/"
         archive: yes
         delete: no
         rsync_opts:
-          - "--exclude=world/"
+          - "--exclude=world*/"
           - "--exclude=logs/"
           - "--exclude=crash-reports/"
           - "--exclude=*.lock"
@@ -74,11 +83,16 @@
           - "--exclude=backups/"
 
     - name: cleanup staging
-      file: { path: "{{ stage_dir }}", state: absent }
+      file:
+        path: "/tmp/sgrodocraft_{{ deploy_tag }}"
+        state: absent
 
     - name: fix ownership to mc on target
-      command: chown -R mc:mc "{{ target_dir }}"
-      changed_when: false
+      file:
+        path: "{{ target_dir }}"
+        owner: mc
+        group: mc
+        recurse: yes
 
     - name: set permissions 755/644 on target
       shell: |
@@ -87,10 +101,17 @@
       changed_when: false
 
     - name: start minecraft
-      systemd: { name: "{{ service_name }}", state: started, enabled: yes }
+      systemd:
+        name: "{{ service_name }}"
+        state: started
+        enabled: yes
 
     - name: health-check
-      wait_for: { host: 127.0.0.1, port: "{{ mc_port }}", delay: 2, timeout: 60 }
+      wait_for:
+        host: 127.0.0.1
+        port: "{{ mc_port }}"
+        delay: 2
+        timeout: 60
 
     - name: save deployed tag marker
       copy:
@@ -99,3 +120,10 @@
         group: mc
         mode: "0644"
         content: "{{ deploy_tag }}\n"
+
+  post_tasks:
+    - name: always clean staging even if failed
+      file:
+        path: "/tmp/sgrodocraft_{{ deploy_tag }}"
+        state: absent
+      ignore_errors: yes
