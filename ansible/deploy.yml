@@ -1,34 +1,24 @@
 ---
-# deploy in place to /home/mc/minecraft-survival using an artifact from semaphore
-# no automatic rollback; optional motd update from version tag
-- name: deploy config to mc server (in-place)
+# deploy in place from local artifacts on mc
+- name: deploy config to mc server (in-place, local artifact)
   hosts: mc_host
   become: yes
   become_user: root
-  become_method: su
+  gather_facts: false
 
   vars:
-    # target location on the mc server
     target_dir: /home/mc/minecraft-survival
     service_name: mc-survival-java
     mc_port: 25565
 
-    # artifacts live on the semaphore node (controller)
-    artifacts_dir: "/srv/mc/artifacts"
+    artifacts_dir: "/srv/mc/artifacts"                 # now on the mc vm
     deploy_sha: "{{ deploy_sha | default(lookup('file', artifacts_dir ~ '/latest.txt')) | trim }}"
-    config_zip_local: "{{ artifacts_dir }}/config-{{ deploy_sha }}.zip"
+    config_zip: "{{ artifacts_dir }}/config-{{ deploy_sha }}.zip"
 
-    # temporary staging on the target host
     stage_dir: "/tmp/sgrodocraft_{{ deploy_sha }}"
-
-    # files copied 1:1 from repo
     repo_root: "{{ lookup('env','SEMAPHORE_GIT_DIR') | default(playbook_dir ~ '/..', true) }}"
-    repo_files:
-      - run.sh
-      - user_jvm_args.txt
-      - server.properties
+    repo_files: [ 'run.sh', 'user_jvm_args.txt', 'server.properties' ]
 
-    # protect state while syncing
     protect_paths:
       - "world/"
       - "logs/"
@@ -37,69 +27,24 @@
       - "eula.txt"
       - "backups/"
 
-    # optional version discovery and motd update
     set_motd_from_tag: true
     version_tag: "{{ deploy_tag | default(omit) }}"
-    github_owner: ""           # e.g. "leox1924" (optional)
-    github_repo: ""            # e.g. "sgrodolcraft" (optional)
-    github_api_token: ""       # set via semaphore secret if you want api fallback
 
   pre_tasks:
     - name: ensure target dir exists
       file: { path: "{{ target_dir }}", state: directory, owner: mc, group: mc, mode: "0755" }
 
-    # try to resolve version tag if not provided explicitly
-    - name: get version from git tag on controller when not provided
-      when: set_motd_from_tag and (version_tag is not defined)
-      delegate_to: localhost
-      command: >
-        bash -lc "git -C '{{ repo_root }}' describe --tags --abbrev=0 --match 'v*'"
-      register: git_tag
-      failed_when: false
-      changed_when: false
-
-    - name: set version_tag from git describe if found
-      when: set_motd_from_tag and (version_tag is not defined) and (git_tag.rc == 0) and (git_tag.stdout | length > 0)
-      set_fact:
-        version_tag: "{{ git_tag.stdout }}"
-
-    - name: fallback to github api latest release if still empty
-      when: set_motd_from_tag and (version_tag is not defined) and (github_owner | length > 0) and (github_repo | length > 0) and (github_api_token | length > 0)
-      delegate_to: localhost
-      uri:
-        url: "https://api.github.com/repos/{{ github_owner }}/{{ github_repo }}/releases/latest"
-        method: GET
-        headers:
-          Authorization: "Bearer {{ github_api_token }}"
-          Accept: "application/vnd.github+json"
-          X-GitHub-Api-Version: "2022-11-28"
-      register: gh_rel
-      failed_when: false
-      changed_when: false
-
-    - name: set version_tag from github api if available
-      when: set_motd_from_tag and (version_tag is not defined) and (gh_rel.json.tag_name is defined)
-      set_fact:
-        version_tag: "{{ gh_rel.json.tag_name }}"
-
   tasks:
-    - name: stop minecraft service before deploy
+    - name: stop minecraft before deploy
       systemd: { name: "{{ service_name }}", state: stopped }
       ignore_errors: yes
 
-    - name: create staging dir on target
+    - name: create staging dir
       file: { path: "{{ stage_dir }}", state: directory, mode: "0755" }
 
-    - name: copy artifact from controller to target
-      copy:
-        src: "{{ config_zip_local }}"
-        dest: "{{ stage_dir }}/config.zip"
-        mode: "0644"
-      delegate_to: localhost
-
-    - name: unarchive artifact into staging
+    - name: unarchive local artifact into staging
       unarchive:
-        src: "{{ stage_dir }}/config.zip"
+        src: "{{ config_zip }}"
         dest: "{{ stage_dir }}"
         remote_src: yes
 
@@ -131,18 +76,17 @@
         delete: no
         rsync_opts: >-
           {{ protect_paths | map('regex_replace', '^(.*)$', '--exclude=\\1') | list }}
-      delegate_to: "{{ inventory_hostname }}"
 
     - name: cleanup staging
       file: { path: "{{ stage_dir }}", state: absent }
 
-    - name: start minecraft service after deploy
+    - name: start minecraft after deploy
       systemd: { name: "{{ service_name }}", state: started, enabled: yes }
 
-    - name: health-check on tcp port
+    - name: health-check
       wait_for: { host: 127.0.0.1, port: "{{ mc_port }}", delay: 2, timeout: 60 }
 
-    - name: save deployed commit marker on target
+    - name: save deployed commit marker
       copy:
         content: "{{ deploy_sha }}\n"
         dest: "{{ target_dir }}/.last_good_commit"
