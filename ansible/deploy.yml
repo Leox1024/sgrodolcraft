@@ -6,6 +6,8 @@
   become_method: sudo
   gather_facts: false
 
+#------------------------------------------#
+
   vars:
     target_dir: "/home/mc/minecraft-survival"
     service_name: "mc-survival-java"
@@ -19,6 +21,8 @@
       - "*.lock"
       - "eula.txt"
       - "backups/"
+
+#------------------------------------------#
 
   pre_tasks:
     - name: ensure target dir
@@ -39,6 +43,8 @@
       ansible.builtin.set_fact:
         deploy_tag: "{{ (latest_tag_file.content | b64decode).strip() }}"
         stage_dir: "/tmp/sgrodocraft_{{ (latest_tag_file.content | b64decode).strip() }}"
+
+#------------------------------------------#
 
   tasks:
     - name: stop minecraft
@@ -120,6 +126,8 @@
         group: mc
         mode: "0644"
         content: "{{ deploy_tag }}\n"
+
+#------------------------------------------#
 
   post_tasks:
     - name: always clean staging even if failed
