@@ -2,6 +2,14 @@
 Minecraft server setup managed as IaC
 
 ## config
+minecraft IP:
+```
+minecraft.leox.me / 93.49.80.101
+```
+monitoring:
+```
+monitor.leox.me / public:public
+```
 version:
 ```
 1.21.1
@@ -9,10 +17,6 @@ version:
 modding API:
 ```
 NeoForge 21.1.211
-```
-minecraft IP:
-```
-minecraft.leox.me
 ```
 java version:
 ```
