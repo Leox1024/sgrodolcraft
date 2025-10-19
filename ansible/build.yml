@@ -2,6 +2,7 @@
   hosts: all
   become: yes
   become_user: mc
+  gather_facts: false
 
   vars:
     repo_dir: "/fake/path"  # remo must be already be cloned
