@@ -40,7 +40,7 @@ cd && cd sgrodolcraft && git pull
 ```
 
 ```
-cd && rm minecraft-survival/mods/* && cp sgrodolcraft/mods/ minecraft-survival/mods/
+cd && rm minecraft-survival/mods/* && cp sgrodolcraft/mods/* minecraft-survival/mods/
 ```
 
 ```
