@@ -1,0 +1,14 @@
+- name: git pull only
+  hosts: all
+  become: yes
+  become_user: mc
+  became_method: sudo
+
+  vars:
+    repo_dir: "/home/mc/sgrodolcraft"  # remo must be already be cloned
+
+  tasks:
+    - name: git pull in repo_dir
+      ansible.builtin.command: git pull
+      args:
+        chdir: "{{ repo_dir }}"

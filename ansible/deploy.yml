@@ -1,0 +1,66 @@
+- name: update mods and restart minecraft
+  hosts: all
+  become: yes
+  become_user: mc
+  become_method: sudo
+
+  vars:
+    mc_service: "mc-survival-java.service"
+    mods_src: "/home/mc/sgrodolcraft/mods"
+    mods_dst: "/home/mc/minecraft-survival/mods"
+
+  tasks:
+    - name: stop minecraft service
+      ansible.builtin.systemd:
+        name: "{{ mc_service }}"
+        state: stopped
+
+    - name: wait until service is inactive (poll up to 120s)
+      ansible.builtin.command: "systemctl is-active {{ mc_service }}"
+      register: mc_stop_check
+      changed_when: false
+      retries: 24
+      delay: 5
+      until: mc_stop_check.stdout in ["inactive"]
+
+    # ---------------------------------------------
+
+    - name: ls destination mods before deleting
+      ansible.builtin.find:
+        paths: "{{ mods_dst }}"
+        file_type: any
+        patterns: "*"
+      register: dst_mods_list
+
+    - name: rm files in destination mods dir
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ dst_mods_list.files }}"
+      when: dst_mods_list.matched | int > 0
+
+    # ---------------------------------------------
+
+    - name: copy mods from src to dst
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ mods_dst }}/"
+        mode: "0644"
+        remote_src: true
+      loop: "{{ lookup('ansible.builtin.fileglob', mods_src ~ '/*', wantlist=True) }}"
+      loop_control:
+        label: "{{ item | basename }}"
+
+    # ---------------------------------------------
+
+    - name: start minecraft service
+      ansible.builtin.systemd:
+        name: "{{ mc_service }}"
+        state: started
+        daemon_reload: true
+
+    - name: verify service is active
+      ansible.builtin.command: "systemctl is-active {{ mc_service }}"
+      register: mc_start_check
+      changed_when: false
+      failed_when: mc_start_check.stdout != "active"
