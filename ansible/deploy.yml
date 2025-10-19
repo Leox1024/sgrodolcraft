@@ -46,7 +46,7 @@
       ansible.builtin.copy:
         src: "{{ mods_src }}/"
         dest: "{{ mods_dst }}/"
-        mode: "0644"
+        mode: "0744"
         owner: mc
         group: mc
         remote_src: true
