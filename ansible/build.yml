@@ -1,0 +1,14 @@
+- name: git pull only
+  hosts: all
+  gather_facts: false
+
+  vars:
+    repo_dir: "/fake/path"  # remo must be already be cloned
+
+  tasks:
+    - name: git pull in repo_dir
+      become: true
+      become_user: mc
+      ansible.builtin.command: git pull
+      args:
+        chdir: "{{ repo_dir }}"

@@ -1,0 +1,73 @@
+- name: update mods and restart minecraft
+  hosts: all
+  become: yes
+  become_user: root
+  become_method: sudo
+
+  vars:
+    mc_service: "fake.service"
+    mods_src: "/fake/path"
+    mods_dst: "/fake/path"
+
+  tasks:
+    - name: stop minecraft service
+      ansible.builtin.systemd:
+        name: "{{ mc_service }}"
+        state: stopped
+
+    - name: wait until service is inactive (poll up to 120s)
+      ansible.builtin.command: "systemctl is-active {{ mc_service }}"
+      register: mc_stop_check
+      changed_when: false
+      failed_when: false
+      retries: 24
+      delay: 5
+      until: mc_stop_check.stdout in ["inactive", "failed", "dead"]
+
+    # ---------------------------------------------
+
+    - name: ls destination mods before deleting
+      ansible.builtin.find:
+        paths: "{{ mods_dst }}"
+        file_type: any
+        patterns: "*"
+      register: dst_mods_list
+
+    - name: rm files in destination mods dir
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ dst_mods_list.files }}"
+      when: dst_mods_list.matched | int > 0
+
+    # ---------------------------------------------
+
+    - name: copy mods from src to dst
+      ansible.builtin.copy:
+        src: "{{ mods_src }}/"
+        dest: "{{ mods_dst }}/"
+        mode: "0744"
+        owner: mc
+        group: mc
+        remote_src: true
+
+    - name: fix ownership recursively on mods dst
+      ansible.builtin.file:
+        path: "{{ mods_dst }}/"
+        owner: mc
+        group: mc
+        recurse: yes
+
+    # ---------------------------------------------
+
+    - name: start minecraft service
+      ansible.builtin.systemd:
+        name: "{{ mc_service }}"
+        state: started
+        daemon_reload: true
+
+    - name: verify service is active
+      ansible.builtin.command: "systemctl is-active {{ mc_service }}"
+      register: mc_start_check
+      changed_when: false
+      failed_when: mc_start_check.stdout != "active"
