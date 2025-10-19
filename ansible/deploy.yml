@@ -1,7 +1,7 @@
 - name: update mods and restart minecraft
   hosts: all
   become: yes
-  become_user: mc
+  become_user: root
   become_method: sudo
 
   vars:
@@ -46,6 +46,8 @@
         src: "{{ item }}"
         dest: "{{ mods_dst }}/"
         mode: "0644"
+        owner: mc
+        group: mc
         remote_src: true
       loop: "{{ lookup('ansible.builtin.fileglob', mods_src ~ '/*', wantlist=True) }}"
       loop_control:
