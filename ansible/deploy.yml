@@ -51,6 +51,14 @@
         group: mc
         remote_src: true
 
+    - name: fix ownership recursively on mods dst
+      ansible.builtin.file:
+        path: "{{ mods_dst }}/"
+        owner: mc
+        group: mc
+        recurse: yes
+        remote_src: true
+
     # ---------------------------------------------
 
     - name: start minecraft service
