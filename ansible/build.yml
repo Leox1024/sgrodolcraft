@@ -2,7 +2,7 @@
   hosts: all
   become: yes
   become_user: mc
-  became_method: sudo
+  become_method: sudo
 
   vars:
     repo_dir: "/fake/path"  # remo must be already be cloned
