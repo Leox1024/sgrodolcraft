@@ -5,9 +5,9 @@
   become_method: sudo
 
   vars:
-    mc_service: "mc-survival-java.service"
-    mods_src: "/home/mc/sgrodolcraft/mods"
-    mods_dst: "/home/mc/minecraft-survival/mods"
+    mc_service: "fake.service"
+    mods_src: "/fake/path"
+    mods_dst: "/fake/path"
 
   tasks:
     - name: stop minecraft service
