@@ -19,9 +19,10 @@
       ansible.builtin.command: "systemctl is-active {{ mc_service }}"
       register: mc_stop_check
       changed_when: false
+      failed_when: false
       retries: 24
       delay: 5
-      until: mc_stop_check.stdout in ["inactive"]
+      until: mc_stop_check.stdout in ["inactive", "failed", "dead"]
 
     # ---------------------------------------------
 
