@@ -1,7 +1,5 @@
 - name: git pull only
   hosts: all
-  become: yes
-  become_user: mc
   gather_facts: false
 
   vars:
@@ -9,6 +7,8 @@
 
   tasks:
     - name: git pull in repo_dir
+      become: true
+      become_user: mc
       ansible.builtin.command: git pull
       args:
         chdir: "{{ repo_dir }}"
