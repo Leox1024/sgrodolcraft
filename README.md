@@ -26,3 +26,27 @@ IaC Tooling:
 ```
 Ansible + Semaphore CI
 ```
+## Manual Deploy
+```
+sudo systemctl stop mc-survival-java.service
+```
+
+```
+sudo systemctl status mc-survival-java.service
+```
+
+```
+cd && cd sgrodolcraft && git pull
+```
+
+```
+cd && rm minecraft-survival/mods/* && cp sgrodolcraft/mods/ minecraft-survival/mods/
+```
+
+```
+sudo systemctl start mc-survival-java.service
+```
+
+```
+sudo systemctl status mc-survival-java.service
+```
