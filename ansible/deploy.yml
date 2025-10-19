@@ -50,9 +50,6 @@
         owner: mc
         group: mc
         remote_src: true
-      loop: "{{ lookup('ansible.builtin.fileglob', mods_src ~ '/*', wantlist=True) }}"
-      loop_control:
-        label: "{{ item | basename }}"
 
     # ---------------------------------------------
 
