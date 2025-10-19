@@ -44,7 +44,7 @@
 
     - name: copy mods from src to dst
       ansible.builtin.copy:
-        src: "{{ item }}"
+        src: "{{ mods_src }}/"
         dest: "{{ mods_dst }}/"
         mode: "0644"
         owner: mc
