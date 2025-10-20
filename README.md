@@ -26,5 +26,3 @@ IaC Tooling:
 ```
 Ansible + Semaphore CI
 ```
-sudo systemctl status mc-survival-java.service
-```
