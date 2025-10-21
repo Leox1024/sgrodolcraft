@@ -20,36 +20,14 @@
         state: stopped
 
     # ---------------------------------------------
+    # MODS
     
-    - name: remove properties file dst
-      ansible.builtin.file:
-        path: "{{ mc_dst_properties }}"
-        state: absent
-    
-    - name: copy properties from src to dst
-      ansible.builtin.copy:
-        src: "{{ mc_src_properties }}"
-        dest: "{{ mc_dst_properties }}"
-        remote_src: true
-        owner: mc
-        group: mc
-        mode: "0744"
-
-    - name: remove userjvm file dst
-      ansible.builtin.file:
-        path: "{{ mc_dst_userjvmarg }}"
-        state: absent
-        
-    - name: copy userjvm from src to dst
-      ansible.builtin.copy:
-        src: "{{ mc_src_userjvmarg }}"
-        dest: "{{ mc_dst_userjvmarg }}"
-        remote_src: true
-        owner: mc
-        group: mc
-        mode: "0744"
-        
-    # ---------------------------------------------
+    - name: ls destination mods before deleting
+      ansible.builtin.find:
+        paths: "{{ mods_dst }}"
+        file_type: any
+        patterns: "*"
+      register: dst_mods_list
 
     - name: rm files in destination mods dir
       ansible.builtin.file:
@@ -57,9 +35,6 @@
         state: absent
       loop: "{{ dst_mods_list.files }}"
       when: dst_mods_list.matched | int > 0
-      
-    # ---------------------------------------------
-    
 
     - name: copy mods from src to dst
       ansible.builtin.copy:
@@ -76,6 +51,29 @@
         owner: mc
         group: mc
         recurse: yes
+
+    # ---------------------------------------------
+    # CONFIG
+    
+    - name: copy properties from src to dst
+      ansible.builtin.copy:
+        src: "{{ mc_src_properties }}"
+        dest: "{{ mc_dst_properties }}"
+        remote_src: true
+        owner: mc
+        group: mc
+        mode: "0644"
+        force: true
+
+    - name: copy userjvm from src to dst
+      ansible.builtin.copy:
+        src: "{{ mc_src_userjvmarg }}"
+        dest: "{{ mc_dst_userjvmarg }}"
+        remote_src: true
+        owner: mc
+        group: mc
+        mode: "0644"
+        force: true
 
     # ---------------------------------------------
 
