@@ -6,6 +6,10 @@
 
   vars:
     mc_service: "fake.service"
+    mc_src_properties: "/fake/path/server.properties"
+    mc_src_userjvmarg: "/fake/path/userjvmarg"
+    mc_dst_properties: "/fake/path/server.properties"
+    mc_dst_userjvmarg: "/fake/path/userjvmarg"
     mods_src: "/fake/path"
     mods_dst: "/fake/path"
 
@@ -16,7 +20,8 @@
         state: stopped
 
     # ---------------------------------------------
-
+    # MODS
+    
     - name: ls destination mods before deleting
       ansible.builtin.find:
         paths: "{{ mods_dst }}"
@@ -30,8 +35,6 @@
         state: absent
       loop: "{{ dst_mods_list.files }}"
       when: dst_mods_list.matched | int > 0
-
-    # ---------------------------------------------
 
     - name: copy mods from src to dst
       ansible.builtin.copy:
@@ -48,6 +51,29 @@
         owner: mc
         group: mc
         recurse: yes
+
+    # ---------------------------------------------
+    # CONFIG
+    
+    - name: copy properties from src to dst
+      ansible.builtin.copy:
+        src: "{{ mc_src_properties }}"
+        dest: "{{ mc_dst_properties }}"
+        remote_src: true
+        owner: mc
+        group: mc
+        mode: "0644"
+        force: true
+
+    - name: copy userjvm from src to dst
+      ansible.builtin.copy:
+        src: "{{ mc_src_userjvmarg }}"
+        dest: "{{ mc_dst_userjvmarg }}"
+        remote_src: true
+        owner: mc
+        group: mc
+        mode: "0644"
+        force: true
 
     # ---------------------------------------------
 
