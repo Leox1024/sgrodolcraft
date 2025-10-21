@@ -20,38 +20,34 @@
         state: stopped
 
     # ---------------------------------------------
-
+    
+    - name: remove properties file dst
+      ansible.builtin.file:
+        path: "{{ mc_dst_properties }}"
+        state: absent
+    
     - name: copy properties from src to dst
       ansible.builtin.copy:
         src: "{{ mc_src_properties }}"
         dest: "{{ mc_dst_properties }}"
-        mode: "0744"
-        owner: mc
-        group: mc
         remote_src: true
-
-    - name: fix ownership on properties dst
-      ansible.builtin.file:
-        path: "{{ mc_dst_properties }}"
         owner: mc
         group: mc
-        recurse: yes
+        mode: "0744"
 
+    - name: remove userjvm file dst
+      ansible.builtin.file:
+        path: "{{ mc_dst_userjvmarg }}"
+        state: absent
+        
     - name: copy userjvm from src to dst
       ansible.builtin.copy:
         src: "{{ mc_src_userjvmarg }}"
         dest: "{{ mc_dst_userjvmarg }}"
-        mode: "0744"
-        owner: mc
-        group: mc
         remote_src: true
-
-    - name: fix ownership on userjvm dst
-      ansible.builtin.file:
-        path: "{{ mc_dst_userjvmarg }}"
         owner: mc
         group: mc
-        recurse: yes
+        mode: "0744"
         
     # ---------------------------------------------
 
