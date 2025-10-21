@@ -6,6 +6,10 @@
 
   vars:
     mc_service: "fake.service"
+    mc_src_properties: "/fake/path/server.properties"
+    mc_src_userjvmarg: "/fake/path/userjvmarg"
+    mc_dst_properties: "/fake/path/server.properties"
+    mc_dst_userjvmarg: "/fake/path/userjvmarg"
     mods_src: "/fake/path"
     mods_dst: "/fake/path"
 
@@ -45,6 +49,40 @@
     - name: fix ownership recursively on mods dst
       ansible.builtin.file:
         path: "{{ mods_dst }}/"
+        owner: mc
+        group: mc
+        recurse: yes
+
+    # ---------------------------------------------
+
+    - name: copy properties from src to dst
+      ansible.builtin.copy:
+        src: "{{ mc_src_properties }}"
+        dest: "{{ mc_dst_properties }}"
+        mode: "0744"
+        owner: mc
+        group: mc
+        remote_src: true
+
+    - name: fix ownership on properties dst
+      ansible.builtin.file:
+        path: "{{ mc_dst_properties }}"
+        owner: mc
+        group: mc
+        recurse: yes
+
+    - name: copy userjvm from src to dst
+      ansible.builtin.copy:
+        src: "{{ mc_src_userjvmarg }}"
+        dest: "{{ mc_dst_userjvmarg }}"
+        mode: "0744"
+        owner: mc
+        group: mc
+        remote_src: true
+
+    - name: fix ownership on userjvm dst
+      ansible.builtin.file:
+        path: "{{ mc_dst_userjvmarg }}"
         owner: mc
         group: mc
         recurse: yes
