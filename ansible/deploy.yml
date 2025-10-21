@@ -21,40 +21,6 @@
 
     # ---------------------------------------------
 
-    - name: ls destination mods before deleting
-      ansible.builtin.find:
-        paths: "{{ mods_dst }}"
-        file_type: any
-        patterns: "*"
-      register: dst_mods_list
-
-    - name: rm files in destination mods dir
-      ansible.builtin.file:
-        path: "{{ item.path }}"
-        state: absent
-      loop: "{{ dst_mods_list.files }}"
-      when: dst_mods_list.matched | int > 0
-
-    # ---------------------------------------------
-
-    - name: copy mods from src to dst
-      ansible.builtin.copy:
-        src: "{{ mods_src }}/"
-        dest: "{{ mods_dst }}/"
-        mode: "0744"
-        owner: mc
-        group: mc
-        remote_src: true
-
-    - name: fix ownership recursively on mods dst
-      ansible.builtin.file:
-        path: "{{ mods_dst }}/"
-        owner: mc
-        group: mc
-        recurse: yes
-
-    # ---------------------------------------------
-
     - name: copy properties from src to dst
       ansible.builtin.copy:
         src: "{{ mc_src_properties }}"
@@ -83,6 +49,34 @@
     - name: fix ownership on userjvm dst
       ansible.builtin.file:
         path: "{{ mc_dst_userjvmarg }}"
+        owner: mc
+        group: mc
+        recurse: yes
+        
+    # ---------------------------------------------
+
+    - name: rm files in destination mods dir
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ dst_mods_list.files }}"
+      when: dst_mods_list.matched | int > 0
+      
+    # ---------------------------------------------
+    
+
+    - name: copy mods from src to dst
+      ansible.builtin.copy:
+        src: "{{ mods_src }}/"
+        dest: "{{ mods_dst }}/"
+        mode: "0744"
+        owner: mc
+        group: mc
+        remote_src: true
+
+    - name: fix ownership recursively on mods dst
+      ansible.builtin.file:
+        path: "{{ mods_dst }}/"
         owner: mc
         group: mc
         recurse: yes
